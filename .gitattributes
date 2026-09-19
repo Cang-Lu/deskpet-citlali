@@ -1,0 +1,10 @@
+# Normalise everything to LF in the repository so the working tree is byte
+# identical whichever platform checks it out. Without the explicit `eol=lf`,
+# Windows checkouts would flip every text file to CRLF and produce a diff storm.
+* text=auto eol=lf
+
+*.png   binary
+*.webp  binary
+*.jpg   binary
+*.ico   binary
+*.zip   binary

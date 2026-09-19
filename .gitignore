@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Local caches (npm/Electron; regenerated on install, never commit)
+.npm-cache/
+.electron-cache/
+.electron-userdata/
+
+# QA output: sliced atlas rows, screenshots, self-test reports
+.qa/
+
+# Generated / local data
+*.log
+settings.json
+history.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini

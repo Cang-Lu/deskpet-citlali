@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>atlas slicer</title>
+    <style>
+      html, body { margin: 0; background: #101418; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c" width="16" height="16"></canvas>
+    <script>
+      /**
+       * One labelled sheet showing every animation row, for review in chat.
+       * `notes` carries the per-row annotation (what it is / where it is used).
+       */
+      window.animationSheet = async ({ atlasUrl, cols, scale, labelWidth, notes }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = Math.round(img.naturalWidth / cols);
+        const ch = Math.round(img.naturalHeight / 11);
+        const cellW = Math.round(cw * scale);
+        const cellH = Math.round(ch * scale);
+        const gap = 10;
+
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        canvas.width = labelWidth + cols * cellW;
+        canvas.height = 11 * (cellH + gap) + gap;
+
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = '#12161d';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        for (let row = 0; row < 11; row += 1) {
+          const y = gap + row * (cellH + gap);
+
+          ctx.fillStyle = '#1c2230';
+          ctx.fillRect(0, y, labelWidth - 8, cellH);
+
+          const note = notes[row] || ['', ''];
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = '#9fd8f0';
+          ctx.font = '700 16px Consolas, monospace';
+          ctx.fillText(`${row}  ${note[0]}`, 10, y + 8);
+
+          ctx.fillStyle = '#e8eef7';
+          ctx.font = '13px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+          wrapText(ctx, note[1], 10, y + 34, labelWidth - 26, 17);
+
+          ctx.fillStyle = '#93a2b8';
+          ctx.font = '12px "Microsoft YaHei UI", "Segoe UI", sans-serif';
+          ctx.fillText(note[2] || '', 10, y + cellH - 24);
+
+          ctx.fillStyle = row < 9 ? '#2a3346' : '#3a2a3f';
+          ctx.fillRect(labelWidth, y, cols * cellW, cellH);
+          for (let col = 0; col < cols; col += 1) {
+            ctx.drawImage(img, col * cw, row * ch, cw, ch,
+              labelWidth + col * cellW, y, cellW, cellH);
+          }
+        }
+
+        return canvas.toDataURL('image/png');
+      };
+
+      function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+        const chars = String(text).split('');
+        let line = '';
+        let lineY = y;
+        for (const ch of chars) {
+          const test = line + ch;
+          if (ctx.measureText(test).width > maxWidth && line) {
+            ctx.fillText(line, x, lineY);
+            line = ch;
+            lineY += lineHeight;
+          } else {
+            line = test;
+          }
+        }
+        if (line) ctx.fillText(line, x, lineY);
+      }
+
+      /**
+       * How much motion does each animation row actually have?
+       *
+       * Centroid measures get diluted by her hair mass, so this compares
+       * consecutive frames directly: how many pixels change, and how far apart
+       * those changes are horizontally. A head-shake shows up as many changed
+       * pixels spread across a wide horizontal span.
+       */
+      window.motionProfile = async ({ atlasUrl, cols, headFraction }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = Math.round(img.naturalWidth / cols);
+        const ch = Math.round(img.naturalHeight / 11);
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        canvas.width = cw;
+        canvas.height = ch;
+        const headH = Math.round(ch * headFraction);
+
+        const grab = (row, col) => {
+          ctx.clearRect(0, 0, cw, ch);
+          ctx.drawImage(img, col * cw, row * ch, cw, ch, 0, 0, cw, ch);
+          return ctx.getImageData(0, 0, cw, ch).data;
+        };
+
+        const rows = [];
+        for (let row = 0; row < 11; row += 1) {
+          // Skip empty trailing cells.
+          const frames = [];
+          for (let col = 0; col < cols; col += 1) {
+            const data = grab(row, col);
+            let opaque = 0;
+            for (let i = 3; i < data.length; i += 4) if (data[i] > 16) opaque += 1;
+            frames.push(opaque > cw * ch * 0.02 ? grab(row, col) : null);
+          }
+
+          let pairs = 0;
+          let changedSum = 0;
+          let spanMax = 0;
+          let worst = 0;
+          for (let col = 1; col < cols; col += 1) {
+            const a = frames[col - 1];
+            const b = frames[col];
+            if (!a || !b) continue;
+            pairs += 1;
+            let changed = 0;
+            let minX = cw; let maxX = -1;
+            for (let y = 0; y < headH; y += 1) {
+              for (let x = 0; x < cw; x += 1) {
+                const o = (y * cw + x) * 4;
+                const d = Math.abs(a[o] - b[o]) + Math.abs(a[o + 1] - b[o + 1]) + Math.abs(a[o + 2] - b[o + 2]);
+                if (d > 60) {
+                  changed += 1;
+                  if (x < minX) minX = x;
+                  if (x > maxX) maxX = x;
+                }
+              }
+            }
+            changedSum += changed;
+            if (changed > worst) worst = changed;
+            if (maxX >= minX) {
+              const span = maxX - minX + 1;
+              if (span > spanMax) spanMax = span;
+            }
+          }
+
+          rows.push({
+            row,
+            pairs,
+            avgChanged: pairs ? Math.round(changedSum / pairs) : 0,
+            peakChanged: worst,
+            widestSpan: spanMax,
+          });
+        }
+        return rows;
+      };
+
+      /** Zoomed head strip for one row, so head motion can be seen directly. */
+      window.headStrip = async ({ atlasUrl, cols, row, scale, headFraction }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = Math.round(img.naturalWidth / cols);
+        const ch = Math.round(img.naturalHeight / 11);
+        const srcH = Math.round(ch * headFraction);
+
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        canvas.width = cw * scale * cols;
+        canvas.height = srcH * scale;
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = '#101418';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        for (let col = 0; col < cols; col += 1) {
+          ctx.drawImage(img, col * cw, row * ch, cw, srcH,
+            col * cw * scale, 0, cw * scale, srcH * scale);
+        }
+        return canvas.toDataURL('image/png');
+      };
+
+      /**
+       * Show which pixels the eye detector actually picks.
+       *
+       * Worth having: if the detector is really locking onto her teal hair ring
+       * rather than her irises, every derived left/right verdict is worthless.
+       */
+      window.eyeMaskSheet = async ({ atlasUrl, cols, headFraction, indices, scale }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = Math.round(img.naturalWidth / cols);
+        const ch = Math.round(img.naturalHeight / 11);
+        const headH = Math.round(ch * headFraction);
+
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        canvas.width = cw * scale * indices.length;
+        canvas.height = ch * scale;
+
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = '#101418';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        indices.forEach((index, slot) => {
+          const row = 9 + Math.floor(index / cols);
+          const col = index % cols;
+          const dx = slot * cw * scale;
+          ctx.drawImage(img, col * cw, row * ch, cw, ch, dx, 0, cw * scale, ch * scale);
+
+          // Re-read this cell to classify pixels.
+          const probe = document.createElement('canvas');
+          probe.width = cw;
+          probe.height = ch;
+          const pctx = probe.getContext('2d', { willReadFrequently: true });
+          pctx.drawImage(img, col * cw, row * ch, cw, ch, 0, 0, cw, ch);
+          const { data } = pctx.getImageData(0, 0, cw, ch);
+
+          ctx.fillStyle = 'rgba(255, 0, 0, 0.85)';
+          ctx.fillStyle = '#ff0000';
+          for (let y = 0; y < headH; y += 1) {
+            for (let x = 0; x < cw; x += 1) {
+              const o = (y * cw + x) * 4;
+              if (data[o + 3] < 128) continue;
+              const r = data[o]; const g = data[o + 1]; const b = data[o + 2];
+              const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+              if (lum < 150 && b > r + 20 && b > 90 && g < b) {
+                ctx.fillRect(dx + x * scale, y * scale, scale, scale);
+              }
+            }
+          }
+
+          ctx.fillStyle = '#101418';
+          ctx.fillRect(dx, 0, 120, 22);
+          ctx.fillStyle = '#ffd98a';
+          ctx.font = '700 15px Consolas, monospace';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`index ${index}`, dx + 8, 12);
+        });
+
+        return canvas.toDataURL('image/png');
+      };
+
+      /**
+       * Work out which way each gaze cell actually faces, numerically.
+       *
+       * Reference frame matters. The obvious anchor -- the head's bounding box
+       * -- is useless here: her long hair swings to the opposite side when she
+       * turns, dragging the box centre with it and inverting the answer. The
+       * cushion she sits on never rotates, so its centroid is used as the fixed
+       * origin instead, and the eye centroid is measured against that.
+       */
+      window.eyeBias = async ({ atlasUrl, cols, headFraction, cushionFraction }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = Math.round(img.naturalWidth / cols);
+        const ch = Math.round(img.naturalHeight / 11);
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        canvas.width = cw;
+        canvas.height = ch;
+
+        const rows = [];
+        for (let i = 0; i < 16; i += 1) {
+          const row = 9 + Math.floor(i / cols);
+          const col = i % cols;
+          ctx.clearRect(0, 0, cw, ch);
+          ctx.drawImage(img, col * cw, row * ch, cw, ch, 0, 0, cw, ch);
+          const { data } = ctx.getImageData(0, 0, cw, ch);
+          const headH = Math.round(ch * headFraction);
+          const cushionTop = Math.round(ch * cushionFraction);
+
+          let eyeSum = 0; let eyeCount = 0;
+          let cushSum = 0; let cushCount = 0;
+
+          for (let y = 0; y < ch; y += 1) {
+            for (let x = 0; x < cw; x += 1) {
+              const o = (y * cw + x) * 4;
+              if (data[o + 3] < 128) continue;
+              const r = data[o]; const g = data[o + 1]; const b = data[o + 2];
+
+              if (y >= cushionTop) {
+                // The cushion is large, flat and near-white, and does not move.
+                if (Math.min(r, g, b) > 205 && Math.max(r, g, b) - Math.min(r, g, b) < 22) {
+                  cushSum += x; cushCount += 1;
+                }
+              } else if (y < headH) {
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                // Her irises are a saturated indigo: darker than the pink hair
+                // and neutral skin, and blue outruns red.
+                if (lum < 150 && b > r + 20 && b > 90 && g < b) {
+                  eyeSum += x; eyeCount += 1;
+                }
+              }
+            }
+          }
+
+          const origin = cushCount > 200 ? cushSum / cushCount : cw / 2;
+          const eyeCentre = eyeCount ? eyeSum / eyeCount : null;
+          rows.push({
+            index: i,
+            eyePixels: eyeCount,
+            cushionPixels: cushCount,
+            origin: Number(origin.toFixed(1)),
+            eyeCentre: eyeCentre == null ? null : Number(eyeCentre.toFixed(1)),
+            // Positive = eyes sit to the right of the cushion -> facing right.
+            bias: eyeCentre == null ? null : Number(((eyeCentre - origin) / cw).toFixed(3)),
+          });
+        }
+        return rows;
+      };
+
+      /**
+       * Zoomed head-crop sheet for a subset of gaze cells. Determining which
+       * way a profile faces needs far more pixels than the full-body sheet.
+       */
+      window.zoomSheet = async ({ atlasUrl, cols, indices, grid, scale, cropTop }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = img.naturalWidth / cols;
+        const ch = img.naturalHeight / 11;
+        const srcH = ch * cropTop;
+
+        const cellW = Math.round(cw * scale);
+        const cellH = Math.round(srcH * scale);
+        const labelH = 24;
+
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        canvas.width = cellW * grid;
+        canvas.height = (cellH + labelH) * Math.ceil(indices.length / grid);
+
+        ctx.fillStyle = '#101418';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = false;
+
+        indices.forEach((index, slot) => {
+          const row = 9 + Math.floor(index / cols);
+          const col = index % cols;
+          const gx = (slot % grid) * cellW;
+          const gy = Math.floor(slot / grid) * (cellH + labelH);
+
+          ctx.fillStyle = '#1d222c';
+          ctx.fillRect(gx, gy, cellW, labelH);
+          ctx.fillStyle = '#ffd98a';
+          ctx.font = '700 15px Consolas, monospace';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`index ${index}`, gx + 8, gy + labelH / 2 + 1);
+
+          ctx.drawImage(img, col * cw, row * ch, cw, srcH, gx, gy + labelH, cellW, cellH);
+        });
+
+        return canvas.toDataURL('image/png');
+      };
+
+      /**
+       * Audit the alpha channel around the sprite edge.
+       *
+       * A "dark grey border" around pixel art is usually an alpha fringe: the
+       * anti-aliased edge pixels carry RGB values that were matted against a
+       * dark background, so compositing them over the desktop produces a dirty
+       * halo. This reports the alpha histogram and, per alpha bucket, the mean
+       * colour -- which is enough to tell a fringe from a deliberate outline.
+       */
+      window.alphaAudit = async ({ atlasUrl, cols, row, col, buckets }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = Math.round(img.naturalWidth / cols);
+        const ch = Math.round(img.naturalHeight / 11);
+
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        canvas.width = cw;
+        canvas.height = ch;
+        ctx.clearRect(0, 0, cw, ch);
+        ctx.drawImage(img, col * cw, row * ch, cw, ch, 0, 0, cw, ch);
+        const { data } = ctx.getImageData(0, 0, cw, ch);
+
+        const histogram = new Array(buckets).fill(0);
+        const sums = Array.from({ length: buckets }, () => ({ r: 0, g: 0, b: 0, n: 0 }));
+        let minX = cw;
+        let minY = ch;
+        let maxX = -1;
+        let maxY = -1;
+        let borderOpaque = 0;
+
+        for (let y = 0; y < ch; y += 1) {
+          for (let x = 0; x < cw; x += 1) {
+            const i = (y * cw + x) * 4;
+            const a = data[i + 3];
+            const bucket = Math.min(buckets - 1, Math.floor((a / 256) * buckets));
+            histogram[bucket] += 1;
+            if (a > 0) {
+              sums[bucket].r += data[i];
+              sums[bucket].g += data[i + 1];
+              sums[bucket].b += data[i + 2];
+              sums[bucket].n += 1;
+            }
+            if (a > 8) {
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+              // Anything visibly opaque hugging the cell border would mean a
+              // baked background panel rather than a fringe.
+              if (x <= 1 || y <= 1 || x >= cw - 2 || y >= ch - 2) borderOpaque += 1;
+            }
+          }
+        }
+
+        const perBucket = histogram.map((count, i) => ({
+          alphaFrom: Math.round((i / buckets) * 255),
+          alphaTo: Math.round(((i + 1) / buckets) * 255) - 1,
+          count,
+          meanRgb: sums[i].n
+            ? [Math.round(sums[i].r / sums[i].n), Math.round(sums[i].g / sums[i].n), Math.round(sums[i].b / sums[i].n)]
+            : null,
+        }));
+
+        return {
+          cell: { width: cw, height: ch, row, col },
+          total: cw * ch,
+          histogram,
+          perBucket,
+          contentBox: { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 },
+          borderOpaquePixels: borderOpaque,
+        };
+      };
+
+      /**
+       * Remove the dark matte baked into anti-aliased edge pixels.
+       *
+       * The atlas was matted against a dark background before its alpha was
+       * extracted, so the semi-transparent rim carries dark RGB (measured mean
+       * ~42,29,44 against ~183,167,185 for the opaque body). Compositing that
+       * over a light desktop yields a dirty grey halo.
+       *
+       * Fix: leave alpha alone and repaint each non-opaque pixel with the
+       * average colour of its already-resolved neighbours, working outward a
+       * couple of rings. The silhouette keeps its soft edge but picks up the
+       * sprite's own colours, so it composites cleanly on any background.
+       *
+       * Only RGB is written; alpha is restored from the source afterwards.
+       */
+      window.defringe = (data, w, h, opts) => {
+        const { alphaCut = 250, rings = 2 } = opts || {};
+        const n = w * h;
+        const src = new Uint8ClampedArray(data);
+        const state = new Uint8Array(n); // 0 = unresolved, 1 = opaque, >=2 = bled ring
+        let opaqueCount = 0;
+
+        for (let i = 0; i < n; i += 1) {
+          if (src[i * 4 + 3] >= alphaCut) {
+            state[i] = 1;
+            opaqueCount += 1;
+          }
+        }
+
+        const NEIGHBOURS = [-1, 1, -w, w, -w - 1, -w + 1, w - 1, w + 1];
+        let resolvedThisRing = 0;
+        let touched = 0;
+
+        for (let ring = 2; ring < 2 + rings; ring += 1) {
+          const pending = [];
+          for (let y = 0; y < h; y += 1) {
+            for (let x = 0; x < w; x += 1) {
+              const i = y * w + x;
+              if (state[i] !== 0) continue;
+
+              let r = 0;
+              let g = 0;
+              let b = 0;
+              let hits = 0;
+              for (let k = 0; k < NEIGHBOURS.length; k += 1) {
+                const j = i + NEIGHBOURS[k];
+                // Guard the horizontal wrap-around at the row edges.
+                if (j < 0 || j >= n) continue;
+                if (Math.abs((j % w) - x) > 1) continue;
+                if (state[j] === 0) continue;
+                const oj = j * 4;
+                r += src[oj];
+                g += src[oj + 1];
+                b += src[oj + 2];
+                hits += 1;
+              }
+              if (hits > 0) pending.push(i, r / hits, g / hits, b / hits);
+            }
+          }
+
+          for (let p = 0; p < pending.length; p += 4) {
+            const i = pending[p];
+            const o = i * 4;
+            data[o] = pending[p + 1];
+            data[o + 1] = pending[p + 2];
+            data[o + 2] = pending[p + 3];
+            state[i] = ring;
+            resolvedThisRing += 1;
+          }
+          touched += resolvedThisRing;
+          if (resolvedThisRing === 0) break;
+          resolvedThisRing = 0;
+        }
+
+        // Alpha is never modified, but restore it defensively.
+        for (let i = 0; i < n; i += 1) data[i * 4 + 3] = src[i * 4 + 3];
+
+        return { opaqueCount, bledPixels: touched };
+      };
+
+      /** Run the defringe pass over a whole atlas and hand back a data URL. */
+      window.defringeAtlas = async ({ atlasUrl, opts }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const started = performance.now();
+        const stats = window.defringe(imageData.data, canvas.width, canvas.height, opts);
+        const elapsed = performance.now() - started;
+        ctx.putImageData(imageData, 0, 0);
+
+        return { stats: { ...stats, ms: Math.round(elapsed) }, dataUrl: canvas.toDataURL('image/png') };
+      };
+
+      /**
+       * Composite one cell over several backgrounds at high zoom, so any fringe
+       * becomes obvious: a fringe is invisible on black but glaring on white,
+       * while a baked-in shadow stays dark on every background.
+       */
+      window.fringeProof = async ({ atlasUrl, cols, row, col, scale, pad }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = Math.round(img.naturalWidth / cols);
+        const ch = Math.round(img.naturalHeight / 11);
+
+        // Crop tight around the sprite so the edge detail is large on screen.
+        const probe = document.getElementById('c');
+        const pctx = probe.getContext('2d', { willReadFrequently: true });
+        probe.width = cw;
+        probe.height = ch;
+        pctx.clearRect(0, 0, cw, ch);
+        pctx.drawImage(img, col * cw, row * ch, cw, ch, 0, 0, cw, ch);
+        const { data } = pctx.getImageData(0, 0, cw, ch);
+
+        let minX = cw; let minY = ch; let maxX = -1; let maxY = -1;
+        for (let y = 0; y < ch; y += 1) {
+          for (let x = 0; x < cw; x += 1) {
+            if (data[(y * cw + x) * 4 + 3] > 8) {
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+
+        const sx = Math.max(0, minX - pad);
+        const sy = Math.max(0, minY - pad);
+        const sw = Math.min(cw - sx, maxX - minX + 1 + pad * 2);
+        const sh = Math.min(ch - sy, maxY - minY + 1 + pad * 2);
+
+        const backgrounds = ['#ffffff', '#000000', '#ff00ff', '#101418'];
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        const tw = Math.round(sw * scale);
+        const th = Math.round(sh * scale) + 22;
+
+        canvas.width = tw;
+        canvas.height = th * backgrounds.length;
+        ctx.imageSmoothingEnabled = false;
+
+        backgrounds.forEach((bg, i) => {
+          ctx.fillStyle = bg;
+          ctx.fillRect(0, i * th, tw, th);
+          ctx.fillStyle = '#101418';
+          ctx.fillRect(0, i * th, tw, 22);
+          ctx.fillStyle = '#ffd98a';
+          ctx.font = '700 13px Consolas, monospace';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`bg ${bg}`, 8, i * th + 12);
+          ctx.drawImage(img, sx, sy, sw, sh, 0, i * th + 22, tw, Math.round(sh * scale));
+        });
+
+        return canvas.toDataURL('image/png');
+      };
+
+      /**
+       * Build a labelled 4x4 sheet of the 16 gaze cells, in index order, so the
+       * real orientation of each direction can be read off at a glance.
+       *
+       * Index 0 is documented as "up" and the sequence rotates clockwise toward
+       * screen-right. Art does not always match the document.
+       */
+      window.lookSheet = async ({ atlasUrl, cols, scale }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = img.naturalWidth / cols;
+        const ch = img.naturalHeight / rows();
+        function rows() { return 11; }
+
+        const cellW = Math.round(cw * scale);
+        const cellH = Math.round(ch * scale);
+        const labelH = 20;
+        const grid = 4;
+
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        canvas.width = cellW * grid;
+        canvas.height = (cellH + labelH) * grid;
+
+        ctx.fillStyle = '#101418';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = false;
+
+        const NAMES = [
+          'up', 'up-right', 'up-right', 'up-right', 'RIGHT', 'down-right', 'down-right', 'down-right',
+          'down', 'down-left', 'down-left', 'down-left', 'LEFT', 'up-left', 'up-left', 'up-left',
+        ];
+
+        for (let i = 0; i < 16; i += 1) {
+          const row = 9 + Math.floor(i / cols);
+          const col = i % cols;
+          const gx = (i % grid) * cellW;
+          const gy = Math.floor(i / grid) * (cellH + labelH);
+
+          ctx.fillStyle = '#1d222c';
+          ctx.fillRect(gx, gy, cellW, labelH);
+          ctx.fillStyle = '#9fd8f0';
+          ctx.font = '600 12px Consolas, monospace';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${i}  ${NAMES[i]}   (r${row}c${col})`, gx + 6, gy + labelH / 2 + 1);
+
+          ctx.drawImage(img, col * cw, row * ch, cw, ch, gx, gy + labelH, cellW, cellH);
+        }
+
+        return canvas.toDataURL('image/png');
+      };
+
+      /**
+       * Measure how much of each cell actually has opaque pixels.
+       *
+       * Trailing cells in this atlas are frequently empty (the artist only
+       * drew as many frames as the loop needed), so the player needs real
+       * per-row frame counts instead of a blanket "8".
+       */
+      window.analyze = async ({ atlasUrl, cols, rows }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = Math.round(img.naturalWidth / cols);
+        const ch = Math.round(img.naturalHeight / rows);
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        canvas.width = cw;
+        canvas.height = ch;
+
+        const coverage = [];
+        for (let r = 0; r < rows; r += 1) {
+          const row = [];
+          for (let c = 0; c < cols; c += 1) {
+            ctx.clearRect(0, 0, cw, ch);
+            ctx.drawImage(img, c * cw, r * ch, cw, ch, 0, 0, cw, ch);
+            const { data } = ctx.getImageData(0, 0, cw, ch);
+            let opaque = 0;
+            for (let i = 3; i < data.length; i += 4) {
+              if (data[i] > 16) opaque += 1;
+            }
+            row.push(Number((opaque / (cw * ch)).toFixed(4)));
+          }
+          coverage.push(row);
+        }
+        return coverage;
+      };
+
+      /**
+       * Slice the pet atlas into per-row strips plus a tray icon.
+       * Runs inside a renderer so Chromium's WebP decoder does the work —
+       * Electron's nativeImage cannot read WebP.
+       */
+      window.slice = async ({ atlasUrl, cols, rows, labels, scale, traySize }) => {
+        const img = new Image();
+        img.src = atlasUrl;
+        await img.decode();
+
+        const cw = img.naturalWidth / cols;
+        const ch = img.naturalHeight / rows;
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+
+        const strips = [];
+        for (let r = 0; r < rows; r += 1) {
+          canvas.width = Math.round(cw * cols * scale);
+          canvas.height = Math.round(ch * scale);
+          ctx.imageSmoothingEnabled = false;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          for (let c = 0; c < cols; c += 1) {
+            ctx.drawImage(
+              img,
+              c * cw, r * ch, cw, ch,
+              Math.round(c * cw * scale), 0, Math.round(cw * scale), Math.round(ch * scale),
+            );
+          }
+          strips.push({ label: labels[r] || `row-${r}`, dataUrl: canvas.toDataURL('image/png') });
+        }
+
+        // Tray icon: the idle pose, fitted into a square, alpha preserved.
+        const fit = Math.min(traySize / cw, traySize / ch);
+        const tw = Math.round(cw * fit);
+        const th = Math.round(ch * fit);
+        canvas.width = traySize;
+        canvas.height = traySize;
+        ctx.imageSmoothingEnabled = true;
+        ctx.clearRect(0, 0, traySize, traySize);
+        ctx.drawImage(img, 0, 0, cw, ch, Math.round((traySize - tw) / 2), Math.round((traySize - th) / 2), tw, th);
+
+        return {
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+          cellWidth: cw,
+          cellHeight: ch,
+          strips,
+          tray: canvas.toDataURL('image/png'),
+        };
+      };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,77 @@
+:root {
+  --user: #7fc7e8;
+  --pet: #ffd08a;
+}
+
+body.history {
+  display: flex;
+  flex-direction: column;
+}
+
+body.history header {
+  justify-content: space-between;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.log {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: thin;
+}
+.log::-webkit-scrollbar { width: 9px; }
+.log::-webkit-scrollbar-thumb { background: #333d4d; border-radius: 5px; }
+
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.turn .who {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.turn .body {
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Long answers may contain code; keep the original spacing readable. */
+  font-variant-ligatures: none;
+}
+
+.turn.user .body {
+  border-color: rgba(127, 199, 232, 0.45);
+  align-self: flex-end;
+  max-width: 92%;
+}
+.turn.user .who { color: var(--user); text-align: right; }
+.turn.user { align-items: flex-end; }
+
+.turn.pet .body { border-color: rgba(255, 208, 138, 0.35); }
+.turn.pet .who { color: var(--pet); }
+
+.empty {
+  margin: auto;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  line-height: 1.8;
+}
+
+.muted { color: var(--muted); font-size: 11.5px; }

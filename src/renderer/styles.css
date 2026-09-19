@@ -1,0 +1,279 @@
+:root {
+  --pet-w: 288px;
+  --pet-h: 312px;
+  --bubble-zone: 172px;
+  --ink: #f2f6fb;
+  --panel: rgba(24, 30, 42, 0.92);
+  --panel-border: rgba(160, 200, 235, 0.28);
+  --accent: #9fd8f0;
+  --accent-warm: #ffd08a;
+  --font: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: var(--font);
+  color: var(--ink);
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+#stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* The canvas covers the whole window; hit testing is done in JS so that
+   transparent areas can pass clicks through to whatever is underneath. */
+#pet {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Speech bubble                                                       */
+/* ------------------------------------------------------------------ */
+
+#bubble {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(var(--pet-h) + 2px);
+  max-height: calc(var(--bubble-zone) - 14px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 11px 6px;
+  border-radius: 13px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(7px);
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  pointer-events: none;
+}
+
+#bubble.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+/* Little tail pointing down at the pet. */
+#bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  background: var(--panel);
+  border-right: 1px solid var(--panel-border);
+  border-bottom: 1px solid var(--panel-border);
+  transform: rotate(45deg);
+  border-bottom-right-radius: 2px;
+}
+
+#bubble-text {
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  max-height: calc(var(--bubble-zone) - 58px);
+  scrollbar-width: thin;
+}
+#bubble-text::-webkit-scrollbar {
+  width: 6px;
+}
+#bubble-text::-webkit-scrollbar-thumb {
+  background: rgba(160, 200, 235, 0.3);
+  border-radius: 3px;
+}
+
+#bubble-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 16px;
+  font-size: 10px;
+  color: rgba(200, 220, 240, 0.62);
+}
+
+#bubble-status {
+  letter-spacing: 0.02em;
+}
+
+#bubble-close {
+  border: 0;
+  background: transparent;
+  color: rgba(200, 220, 240, 0.6);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#bubble-close:hover {
+  background: rgba(160, 200, 235, 0.16);
+  color: var(--ink);
+}
+
+/* Mood tint along the bubble edge, so the state is readable at a glance. */
+#bubble[data-mood="happy"] { border-color: rgba(255, 208, 138, 0.55); }
+#bubble[data-mood="excited"] { border-color: rgba(255, 208, 138, 0.55); }
+#bubble[data-mood="greeting"] { border-color: rgba(159, 216, 240, 0.6); }
+#bubble[data-mood="shy"] { border-color: rgba(255, 168, 189, 0.6); }
+#bubble[data-mood="sad"] { border-color: rgba(130, 150, 220, 0.6); }
+#bubble[data-mood="angry"] { border-color: rgba(255, 107, 107, 0.6); }
+#bubble[data-mood="sleepy"] { border-color: rgba(140, 150, 220, 0.55); }
+#bubble[data-mood="thinking"] { border-color: rgba(150, 220, 255, 0.55); }
+#bubble[data-mood="error"] { border-color: rgba(255, 107, 107, 0.7); }
+
+/* Work mode: a cooler, squarer bubble so it reads as "taking this seriously". */
+body[data-mode="work"] #bubble {
+  border-color: rgba(140, 200, 240, 0.55);
+  border-radius: 10px;
+}
+body[data-mode="work"] #bubble-text {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* Pinned bubbles are things the user must not miss; make them harder to
+   overlook without turning the whole pet into a popup. */
+#bubble.pinned {
+  border-color: rgba(255, 107, 107, 0.75);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 107, 107, 0.35);
+}
+
+/* ------------------------------------------------------------------ */
+/* Composer                                                            */
+/* ------------------------------------------------------------------ */
+
+#composer {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 4px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 3px 3px 10px;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  pointer-events: none;
+}
+
+#composer.visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+#input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12.5px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+#input::placeholder {
+  color: rgba(200, 220, 240, 0.45);
+}
+
+#composer button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 13px;
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 5px 10px;
+}
+
+#send {
+  background: linear-gradient(180deg, #9fd8f0, #6fb6d6);
+  color: #10212b;
+  font-weight: 700;
+}
+#send:hover {
+  filter: brightness(1.08);
+}
+
+#dismiss-composer {
+  background: transparent;
+  color: rgba(200, 220, 240, 0.6);
+  padding: 5px 7px;
+}
+#dismiss-composer:hover {
+  background: rgba(160, 200, 235, 0.16);
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ */
+/* Toast — takes over the bubble slot so it can never collide with the */
+/* composer, which occupies the top of the window.                     */
+/* ------------------------------------------------------------------ */
+
+#toast {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(var(--pet-h) + 2px);
+  z-index: 5;
+  padding: 9px 11px;
+  border-radius: 13px;
+  background: rgba(60, 26, 30, 0.95);
+  border: 1px solid rgba(255, 107, 107, 0.55);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+#toast.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+#composer {
+  z-index: 4;
+}
+
+.hidden {
+  display: none !important;
+}

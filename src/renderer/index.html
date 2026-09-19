@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The renderer never touches the network: every model call happens in the
+      main process. connect-src 'none' makes that a guarantee rather than a
+      convention. Served from the deskpet:// origin, so 'self' is meaningful.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>茜特菈莉</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="pet"></canvas>
+
+      <form id="composer" autocomplete="off">
+        <input
+          id="input"
+          type="text"
+          maxlength="800"
+          placeholder="和茜特菈莉说点什么…"
+          spellcheck="false"
+        />
+        <button id="send" type="submit" title="发送 (Enter)">发送</button>
+        <button id="dismiss-composer" type="button" title="收起 (Esc)">✕</button>
+      </form>
+
+      <div id="bubble" data-mood="neutral">
+        <div id="bubble-text"></div>
+        <div id="bubble-foot">
+          <span id="bubble-status"></span>
+          <button id="bubble-close" type="button" title="收起">✕</button>
+        </div>
+      </div>
+
+      <div id="toast"></div>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
