@@ -15,8 +15,15 @@ const path = require('node:path');
 const { BrowserWindow } = require('electron');
 
 const ROOT = path.join(__dirname, '..', '..');
-const OUT_DIR = path.join(ROOT, '.qa', 'states');
-const REPORT = path.join(ROOT, '.qa', 'selftest.json');
+/**
+ * Where screenshots and the report go.
+ *
+ * Overridable because in a packaged build the app lives inside a read-only
+ * `app.asar`, so writing next to the source is impossible there.
+ */
+const QA_DIR = process.env.DESKPET_QA_DIR || path.join(ROOT, '.qa');
+const OUT_DIR = path.join(QA_DIR, 'states');
+const REPORT = path.join(QA_DIR, 'selftest.json');
 /** Marker used to prove the renderer console capture is actually wired up. */
 const PROBE = '__deskpet_console_probe__';
 
@@ -58,7 +65,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
 
   try {
     fs.mkdirSync(OUT_DIR, { recursive: true });
-    fs.mkdirSync(path.join(ROOT, '.qa'), { recursive: true });
+    fs.mkdirSync(QA_DIR, { recursive: true });
 
     if (!pet || !pet.win || pet.win.isDestroyed()) throw new Error('the pet window was never created');
     const wc = pet.win.webContents;
@@ -319,7 +326,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     write(`assert low-balance reminder: ${report.assertions.lowBalanceOk} ${JSON.stringify(report.assertions.lowBalance)}`);
 
     const lowShot = await wc.capturePage();
-    fs.writeFileSync(path.join(ROOT, '.qa', 'low-balance.png'), lowShot.toPNG());
+    fs.writeFileSync(path.join(QA_DIR, 'low-balance.png'), lowShot.toPNG());
     await wc.executeJavaScript('__deskpet.hideBubble()');
 
     // 5g. The character must render true to her source art. This is the check
@@ -456,7 +463,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
       );
       await sleep(800);
       const shot = await wc.capturePage();
-      fs.writeFileSync(path.join(ROOT, '.qa', `gaze-cursor-${label}.png`), shot.toPNG());
+      fs.writeFileSync(path.join(QA_DIR, `gaze-cursor-${label}.png`), shot.toPNG());
       const g = await wc.executeJavaScript('window.__deskpet.gaze');
       report.assertions[`gazeShot_${label}`] = { canonical: g.index, atlasCell: null };
       write(`gaze screenshot (cursor ${label}): canonical index ${g.index}`);
@@ -671,7 +678,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
       await sleep(700);
       const info = await wc.executeJavaScript('window.__deskpet.info');
       const shot = await wc.capturePage();
-      fs.writeFileSync(path.join(ROOT, '.qa', `pose-${base}.png`), shot.toPNG());
+      fs.writeFileSync(path.join(QA_DIR, `pose-${base}.png`), shot.toPNG());
       seatedShots[base] = { clip: info.clip, effect: info.effect };
     }
     report.assertions.seatedPoses = seatedShots;
@@ -770,6 +777,12 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     // 5l. A long answer must survive being read.
     //     The reported failure: she wandered off, muttered a random line over
     //     the top of the reply, and the answer was then gone for good.
+    //
+    //     A key has to exist first: with no key, clicking her offers to open
+    //     Settings instead of restoring a line, which is correct behaviour but
+    //     not the path under test here.
+    const secrets = require('./secrets');
+    config.update(secrets.writeApiKey('sk-selftest-reply-guard'));
     await wc.executeJavaScript(`
       __deskpet.pauseBehavior(false);
       window.__longReply = '这是一段很长的回答，用于验证它不会被随机台词覆盖。'.repeat(20);
@@ -822,6 +835,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     write(`assert long replies survive: ${report.assertions.replyProtectionOk} ` +
       `${JSON.stringify(report.assertions.replyProtection)}`);
     await wc.executeJavaScript('__deskpet.hideBubble(); __deskpet.pauseBehavior(true)');
+    config.update(secrets.writeApiKey(''));
 
     // 5m. The conversation log must be reachable and show what was said.
     if (openHistory) {
@@ -840,7 +854,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
         );
         const shot = await historyWin.capturePage();
         if (!shot.isEmpty()) {
-          fs.writeFileSync(path.join(ROOT, '.qa', 'history-window.png'), shot.toPNG());
+          fs.writeFileSync(path.join(QA_DIR, 'history-window.png'), shot.toPNG());
           write(`history window capture: ${JSON.stringify(shot.getSize())}`);
         } else {
           write('history window capture: unavailable');
@@ -904,7 +918,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
         report.assertions.settingsWindow = Boolean(image && !image.isEmpty());
         if (image && !image.isEmpty()) {
           report.assertions.settingsWindowSize = image.getSize();
-          fs.writeFileSync(path.join(ROOT, '.qa', 'settings-window.png'), image.toPNG());
+          fs.writeFileSync(path.join(QA_DIR, 'settings-window.png'), image.toPNG());
           write(`settings window capture: ${JSON.stringify(image.getSize())} empty=false`);
         } else {
           write('settings window capture: unavailable');
@@ -961,7 +975,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
           await sleep(700);
           const scrolled = await safeCapture(settingsWin);
           if (scrolled && !scrolled.isEmpty()) {
-            fs.writeFileSync(path.join(ROOT, '.qa', 'settings-window-2.png'), scrolled.toPNG());
+            fs.writeFileSync(path.join(QA_DIR, 'settings-window-2.png'), scrolled.toPNG());
             write('settings window (scrolled) captured');
           }
         }

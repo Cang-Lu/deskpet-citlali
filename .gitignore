@@ -5,6 +5,10 @@ node_modules/
 .npm-cache/
 .electron-cache/
 .electron-userdata/
+.electron-builder-cache/
+
+# Packaging output
+dist/
 
 # QA output: sliced atlas rows, screenshots, self-test reports
 .qa/

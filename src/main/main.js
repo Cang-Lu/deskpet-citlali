@@ -1,10 +1,9 @@
 'use strict';
 
 const path = require('node:path');
-const { pathToFileURL } = require('node:url');
 const fs = require('node:fs');
 const {
-  app, ipcMain, BrowserWindow, shell, protocol, net, Menu, screen,
+  app, ipcMain, BrowserWindow, shell, protocol, Menu, screen,
 } = require('electron');
 
 const { Config, resolveDataDir } = require('./config');
@@ -390,7 +389,16 @@ function bootstrap() {
   /* ------------------------------------------------------------------ */
 
   /** Resolve deskpet://app/<relative path> to a file inside the project root. */
-  function handleAppProtocol(request) {
+  /**
+   * Serve `deskpet://app/<relative path>` from the project directory.
+   *
+   * Reads through `fs` rather than handing a `file:` URL to `net.fetch`.
+   * Inside a packaged build the app lives in `app.asar`, and while Electron's
+   * `fs` understands asar archives, the file loader behind `net.fetch` does
+   * not -- the request would 404, the atlas would never load, and the window
+   * would come up blank.
+   */
+  async function handleAppProtocol(request) {
     try {
       const url = new URL(request.url);
       const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '');
@@ -399,12 +407,36 @@ function bootstrap() {
       if (target !== ROOT && !target.startsWith(ROOT + path.sep)) {
         return new Response('forbidden', { status: 403 });
       }
-      if (!fs.existsSync(target)) {
-        return new Response('not found', { status: 404 });
-      }
-      return net.fetch(pathToFileURL(target).toString());
+      const body = await fs.promises.readFile(target);
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': contentTypeFor(target),
+          'Cache-Control': 'no-cache',
+        },
+      });
     } catch (err) {
+      if (err && err.code === 'ENOENT') return new Response('not found', { status: 404 });
       return new Response(`bad request: ${err.message}`, { status: 400 });
+    }
+  }
+
+  /**
+   * The MIME type matters: the renderer is loaded as ES modules, and a wrong
+   * Content-Type makes Chromium refuse to execute them.
+   */
+  function contentTypeFor(file) {
+    switch (path.extname(file).toLowerCase()) {
+      case '.html': return 'text/html; charset=utf-8';
+      case '.js':
+      case '.mjs': return 'text/javascript; charset=utf-8';
+      case '.css': return 'text/css; charset=utf-8';
+      case '.json': return 'application/json; charset=utf-8';
+      case '.webp': return 'image/webp';
+      case '.png': return 'image/png';
+      case '.svg': return 'image/svg+xml';
+      case '.ico': return 'image/x-icon';
+      default: return 'application/octet-stream';
     }
   }
 

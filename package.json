@@ -1,8 +1,10 @@
 {
-  "name": "deskpet",
+  "name": "deskpet-citlali",
   "version": "0.1.0",
   "private": true,
   "description": "Standalone AI desktop pet — Citlali (Genshin Impact), Electron + DeepSeek.",
+  "author": "Cang-Lu <1848925200@qq.com>",
+  "license": "MIT",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
@@ -10,9 +12,55 @@
     "test:secrets": "electron tools/test-secrets.js",
     "selftest": "electron . --selftest",
     "slice": "electron tools/slice-atlas.js",
-    "fetch-assets": "node tools/fetch-assets.mjs"
+    "fetch-assets": "node tools/fetch-assets.mjs",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable",
+    "dist:installer": "electron-builder --win nsis",
+    "dist:dir": "electron-builder --win dir"
   },
   "devDependencies": {
-    "electron": "^38.2.2"
+    "electron": "^38.2.2",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.canglu.deskpet.citlali",
+    "productName": "Citlali",
+    "copyright": "MIT code; CC BY-NC 4.0 artwork (ZaytsevZY). Not for commercial use.",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "npmRebuild": false,
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Citlali",
+      "artifactName": "Citlali-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Citlali-Portable-${version}.${ext}"
+    }
   }
 }

@@ -704,7 +704,7 @@
        * Runs inside a renderer so Chromium's WebP decoder does the work —
        * Electron's nativeImage cannot read WebP.
        */
-      window.slice = async ({ atlasUrl, cols, rows, labels, scale, traySize }) => {
+      window.slice = async ({ atlasUrl, cols, rows, labels, scale, traySize, iconSize }) => {
         const img = new Image();
         img.src = atlasUrl;
         await img.decode();
@@ -739,6 +739,22 @@
         ctx.imageSmoothingEnabled = true;
         ctx.clearRect(0, 0, traySize, traySize);
         ctx.drawImage(img, 0, 0, cw, ch, Math.round((traySize - tw) / 2), Math.round((traySize - th) / 2), tw, th);
+        const tray = canvas.toDataURL('image/png');
+
+        // Application icon. electron-builder needs at least 256x256 to derive
+        // a Windows .ico, and the Windows shell draws it on arbitrary
+        // backgrounds, so a little padding keeps the silhouette readable.
+        const pad = 0.08;
+        const iconFit = Math.min((iconSize * (1 - pad * 2)) / cw, (iconSize * (1 - pad * 2)) / ch);
+        const iw = Math.round(cw * iconFit);
+        const ih = Math.round(ch * iconFit);
+        canvas.width = iconSize;
+        canvas.height = iconSize;
+        ctx.imageSmoothingEnabled = true;
+        ctx.clearRect(0, 0, iconSize, iconSize);
+        ctx.drawImage(img, 0, 0, cw, ch,
+          Math.round((iconSize - iw) / 2), Math.round((iconSize - ih) / 2), iw, ih);
+        const icon = canvas.toDataURL('image/png');
 
         return {
           width: img.naturalWidth,
@@ -746,7 +762,8 @@
           cellWidth: cw,
           cellHeight: ch,
           strips,
-          tray: canvas.toDataURL('image/png'),
+          tray,
+          icon,
         };
       };
     </script>

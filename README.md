@@ -23,6 +23,35 @@ npm start
 
 On first launch she says hello and points out that no API key is configured yet. **Right-click the pet** (or the tray icon) → **设置 / Settings…** and paste your key in.
 
+### Prebuilt Windows executable
+
+Download one from the [Releases](../../releases) page — no Node.js required:
+
+| File | What it is |
+| --- | --- |
+| `Citlali-Setup-x.y.z.exe` | Installer. Lets you pick the install folder and creates Start Menu + desktop shortcuts. |
+| `Citlali-Portable-x.y.z.exe` | Single-file portable build. Nothing to install — just run it. |
+
+Both are self-contained, about 90 MB (that is Electron's floor, not the app).
+
+> The build is **not code-signed**, so Windows SmartScreen warns the first time. Choose *More info* → *Run anyway*, or build it yourself from source.
+
+### Building the exe yourself
+
+```bash
+npm install
+npm run dist            # installer + portable, into dist/
+npm run dist:installer  # installer only
+npm run dist:portable   # portable only
+npm run dist:dir        # unpacked folder; fastest, skips the NSIS download
+```
+
+Three things about the packaging config are deliberate:
+
+- **`npmRebuild` is off.** The app has no native dependencies, and the rebuild step only needs a toolchain it does not have.
+- **The renderer is served through `fs`, not `net.fetch`.** Inside `app.asar` only Electron's `fs` understands the archive path; handing a `file:` URL to the file loader 404s, which would leave the atlas unloaded and the window blank.
+- **`build/icon.png` is generated**, not hand-drawn: `npm run slice` crops it from the sprite sheet at 256×256 for electron-builder to turn into a `.ico`.
+
 ### If `npm install` fails at Electron's postinstall step
 
 Some restricted environments (sandboxes, certain corporate security policies) forbid install scripts from spawning child processes. The workaround is to fetch the Electron binary yourself:

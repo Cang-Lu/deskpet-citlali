@@ -27,6 +27,8 @@ const COLS = 8;
 const ROWS = 11;
 const SCALE = 2;
 const TRAY_SIZE = 32;
+/** electron-builder derives the Windows .ico from this. */
+const ICON_SIZE = 256;
 
 const LABELS = [
   'row-00-idle', 'row-01-running-right', 'row-02-running-left', 'row-03-waving',
@@ -97,6 +99,7 @@ async function run() {
       labels: LABELS,
       scale: SCALE,
       traySize: TRAY_SIZE,
+      iconSize: ICON_SIZE,
     })})`,
   );
 
@@ -340,6 +343,12 @@ async function run() {
 
   fs.writeFileSync(TRAY_OUT, Buffer.from(result.tray.split(',')[1], 'base64'));
   log(`wrote ${path.relative(ROOT, TRAY_OUT)}`);
+
+  const iconDir = path.join(ROOT, 'build');
+  fs.mkdirSync(iconDir, { recursive: true });
+  const iconOut = path.join(iconDir, 'icon.png');
+  fs.writeFileSync(iconOut, Buffer.from(result.icon.split(',')[1], 'base64'));
+  log(`wrote ${path.relative(ROOT, iconOut)}  (${ICON_SIZE}x${ICON_SIZE}, used by electron-builder)`);
 
   app.exit(0);
 }

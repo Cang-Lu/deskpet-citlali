@@ -23,6 +23,35 @@ npm start
 
 首次运行她会打个招呼，并提示你还没有配置 API Key。**右键桌宠**（或右键托盘图标）→ **设置…**，把 Key 填进去即可。
 
+### 直接下载 Windows 可执行文件
+
+到 [Releases](../../releases) 页面下载，**不需要装 Node.js**：
+
+| 文件 | 说明 |
+| --- | --- |
+| `Citlali-Setup-x.y.z.exe` | 安装版。可以选安装目录，会创建开始菜单和桌面快捷方式。 |
+| `Citlali-Portable-x.y.z.exe` | 免安装单文件版。双击就能跑。 |
+
+两个都是自包含的，约 90MB（这是 Electron 的底噪，不是应用本身的体积）。
+
+> 构建产物**没有代码签名**，所以 Windows SmartScreen 首次运行会拦截。选「更多信息」→「仍要运行」，或者自己从源码构建。
+
+### 自己构建 exe
+
+```bash
+npm install
+npm run dist            # 安装版 + 免安装版，输出到 dist/
+npm run dist:installer  # 只做安装版
+npm run dist:portable   # 只做免安装版
+npm run dist:dir        # 只出解包目录；最快，不用下载 NSIS
+```
+
+打包配置里有三处是刻意的：
+
+- **关掉了 `npmRebuild`。** 这个项目没有任何原生依赖，重建步骤只会要求一套它根本不需要的工具链。
+- **渲染层走 `fs` 读取，而不是 `net.fetch`。** 打包进 `app.asar` 后只有 Electron 的 `fs` 认识 asar 路径；把 `file:` URL 交给文件加载器会 404，结果是图集加载失败、窗口一片空白。
+- **`build/icon.png` 是生成的**，不是手绘的：`npm run slice` 会从精灵图裁出 256×256，交给 electron-builder 转成 `.ico`。
+
 ### 如果 `npm install` 在 Electron 的 postinstall 步骤失败
 
 个别受限环境（沙箱、某些企业安全策略）不允许安装脚本派生子进程。绕过办法是自己下载 Electron 二进制：
@@ -311,8 +340,9 @@ npm start             # 正常运行
 npm test              # 配置迁移单元测试（纯 Node，秒级）
 npm run test:secrets  # API Key 加解密往返测试（需要 Electron）
 npm run selftest      # 自检：逐状态截图 + 断言，产物在 .qa/
-npm run slice         # 重新切图 / 生成托盘图标 / 测量帧数与动作幅度
+npm run slice         # 重新切图 / 生成托盘图标与应用图标 / 测量帧数与动作幅度
 npm run fetch-assets  # 重新下载精灵图并校验 SHA-256
+npm run dist          # 打包成 Windows 可执行文件（见上方「自己构建 exe」）
 ```
 
 `npm run selftest` 会启动真实应用，依次切到每个状态截图到 `.qa/states/`，并断言：思考状态不会瞬间过期、视线左右映射正确、窗口可见、走动能真的移动窗口、模型错误能被干净地报出来、图集去灰边已生效、缩放是无级的（333/400/507 都精确命中）、**情绪光晕没有溢出角色轮廓**、改大小能真的改变窗口、余额接口错误被正确处理、余额不足提醒只触发一次。
