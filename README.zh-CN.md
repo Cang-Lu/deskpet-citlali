@@ -204,7 +204,7 @@ Key 通过 Electron 的 `safeStorage` 用系统密钥库（Windows 上是 DPAPI�
 | 失落 / 恼火 | 5 | 出错、`sad` / `angry` | 雨滴 / 怒气 |
 | 视线跟随 | 9 / 10 | 鼠标靠近时 | — |
 
-**剪辑名是按画面内容起的，不是按行名**——图集的行名有误导性，详见 [docs/DEVELOPMENT-NOTES.md](docs/DEVELOPMENT-NOTES.md)。完整动画总览见 [`docs/animations.png`](docs/animations.png)。
+**剪辑名是按画面内容起的，不是按行名**——图集的行名有误导性。完整动画总览见 [`docs/animations.png`](docs/animations.png)。
 
 ### 她闲着的时候会做什么
 
@@ -294,7 +294,6 @@ tools/
   inspect-shot.js    调试用：裁切并放大截图，输出像素采样，用来定位界面问题
 docs/
   animations.png     11 行动画总览（每帧 + 用途 + 实测动作幅度）
-  DEVELOPMENT-NOTES.md  给贡献者的实现记录与实测数据
 ```
 
 ## 开发
@@ -324,8 +323,6 @@ electron tools/inspect-shot.js <图片路径> .qa/inspect
 调试时渲染进程暴露了 `window.__deskpet`：可以 `__deskpet.setBase('sleepy')`、`__deskpet.setOverlay('happy')`、`__deskpet.setLook(4)`、`__deskpet.setSize(600)`、`__deskpet.measureBackground()`、`__deskpet.info` 等。
 
 设置与对话记忆默认存在系统用户数据目录（可用环境变量 `DESKPET_DATA_DIR` 覆盖，方便做便携或隔离运行）。
-
-改动任何不直观的地方之前，先读 [docs/DEVELOPMENT-NOTES.md](docs/DEVELOPMENT-NOTES.md)——里面记录了当前设计背后的实测数据和走过的弯路（哪些精灵行实际画的是什么、为什么要用主进程轮询光标、为什么状态色调默认关闭）。
 
 ---
 

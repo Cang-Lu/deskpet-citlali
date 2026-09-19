@@ -202,7 +202,7 @@ The atlas has 11 rows: rows 0–8 are the standard animations and rows 9–10 ho
 | Sad / angry | 5 | An error, or `sad` / `angry` | rain / anger puffs |
 | Gaze tracking | 9 / 10 | Cursor comes near | — |
 
-**Clip names describe what the drawing does, not what its row is called** — the atlas row labels are misleading; see [docs/DEVELOPMENT-NOTES.md](docs/DEVELOPMENT-NOTES.md). The full animation sheet is at [`docs/animations.png`](docs/animations.png).
+**Clip names describe what the drawing does, not what its row is called** — the atlas row labels are misleading. The full animation sheet is at [`docs/animations.png`](docs/animations.png).
 
 ### What she does when idle
 
@@ -290,7 +290,6 @@ tools/
   inspect-shot.js      Debug helper: crop/zoom a screenshot and print pixel samples
 docs/
   animations.png       All 11 rows with their frames, uses and measured motion
-  DEVELOPMENT-NOTES.md Implementation findings and measurements for contributors
 ```
 
 ## Development
@@ -319,8 +318,6 @@ electron tools/inspect-shot.js <image path> .qa/inspect
 The renderer exposes `window.__deskpet` for debugging: `__deskpet.setBase('sleepy')`, `__deskpet.setOverlay('happy')`, `__deskpet.setLook(4)`, `__deskpet.setSize(600)`, `__deskpet.measureBackground()`, `__deskpet.info`, and so on.
 
 Settings and conversation memory live in the OS user-data directory by default; set `DESKPET_DATA_DIR` to override it for a portable or isolated run.
-
-Before changing anything non-obvious, read [docs/DEVELOPMENT-NOTES.md](docs/DEVELOPMENT-NOTES.md) — it records the measurements and dead ends behind the current design (which atlas rows actually draw what, why the gaze poller exists, why the mood tint is off by default).
 
 ---
 
