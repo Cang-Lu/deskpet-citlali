@@ -41,6 +41,15 @@ const STEPS = [
   { name: '07-happy', script: `__deskpet.clearOverlay(); __deskpet.setOverlay('happy')` },
   { name: '08-greet', script: `__deskpet.setOverlay('greet')` },
   { name: '09-sad', script: `__deskpet.clearOverlay(); __deskpet.setOverlay('sad', { duration: 600000 })` },
+  // Derived expressions. There is no art for these in the atlas, so the shots
+  // double as a placement check for the overlays in emote.js.
+  { name: '09b-angry', script: `__deskpet.clearOverlay(); __deskpet.emote('angry')` },
+  { name: '09c-furious', script: `__deskpet.emote('furious')` },
+  { name: '09d-hurt', script: `__deskpet.emote('hurt')` },
+  { name: '09e-proud', script: `__deskpet.emote('proud')` },
+  { name: '09f-delighted', script: `__deskpet.emote('delighted')` },
+  { name: '09g-awkward', script: `__deskpet.emote('awkward')` },
+  { name: '09h-dizzy', script: `__deskpet.emote('dizzy')` },
   { name: '10-gaze-right', script: `__deskpet.clearOverlay(); __deskpet.setBase('idle'); __deskpet.setLook(4)` },
   { name: '11-gaze-down-left', script: `__deskpet.setLook(9)` },
   { name: '12-bubble', script: `__deskpet.setLook(null); __deskpet.say('嗯？又是你啊。……别误会，我只是刚好醒着。', 'neutral')` },
@@ -163,15 +172,26 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     //    parked against the right edge of the work area, so walking right would
     //    immediately hit the clamp and prove nothing.
     const startX = pet.win.getPosition()[0];
+    // Tap the walk completion callback to learn *why* it stopped, then put the
+    // real handler back: overwriting it would break the renderer's pose release.
+    const originalOnWalkDone = pet.onWalkDone;
+    let walkReason = null;
+    pet.onWalkDone = (info) => {
+      walkReason = info && info.reason;
+      if (originalOnWalkDone) originalOnWalkDone(info);
+    };
     await wc.executeJavaScript(`window.deskpet.walk(${JSON.stringify({
       direction: -1, speed: 260, targetX: startX - 150,
     })})`);
     await sleep(1500);
     const endX = pet.win.getPosition()[0];
+    pet.onWalkDone = originalOnWalkDone;
     report.assertions.walkFrom = startX;
     report.assertions.walkTo = endX;
+    report.assertions.walkReason = walkReason;
     report.assertions.walkMoved = endX < startX - 100;
-    write(`assert walk moved: ${report.assertions.walkMoved} (${startX} -> ${endX})`);
+    write(`assert walk moved: ${report.assertions.walkMoved} ` +
+      `(${startX} -> ${endX}, reason=${walkReason})`);
 
     // 4b. How expensive is moving a transparent window? If setPosition costs
     //     tens of milliseconds, a per-frame window walk can never be smooth and
@@ -238,21 +258,115 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
       boxHeight: Number(quality.box.height.toFixed(2)),
       deviceWidth: Number(deviceW.toFixed(2)),
       deviceHeight: Number(deviceH.toFixed(2)),
-      supersample: quality.box.supersample,
       mode: quality.mode,
     };
-    report.assertions.rasterOk = quality.mode === 'nearest'
-      || (Number.isInteger(quality.box.supersample) && quality.box.supersample >= 1);
+    // The sprite must land on whole device pixels: a half-pixel origin makes
+    // the browser filter every edge across two pixels.
+    report.assertions.rasterOk = Number.isInteger(Number(deviceW.toFixed(3)))
+      && Number.isInteger(Number(deviceH.toFixed(3)))
+      && Number.isInteger(Number((quality.box.x * quality.dpr).toFixed(3)))
+      && Number.isInteger(Number((quality.box.y * quality.dpr).toFixed(3)));
     write(`assert rasterisation: ${report.assertions.rasterOk} ${JSON.stringify(report.assertions.raster)}`);
 
+    // Sizes change through an async IPC plus a window resize, so a measurement
+    // taken straight afterwards reads the previous frame. Wait for the sprite
+    // box to stop moving before believing anything about it. (Measuring without
+    // this is how an earlier version of this test reported four identical
+    // numbers for four different sizes.)
+    const setSizeAndSettle = async (size, tries = 20) => {
+      await wc.executeJavaScript(`__deskpet.setSize(${size})`);
+      let last = -1;
+      let stable = 0;
+      for (let i = 0; i < tries; i += 1) {
+        await sleep(140);
+        const now = await wc.executeJavaScript(
+          'Math.round(window.__deskpet.info.petBox.height)',
+        );
+        // Require several consecutive identical readings: during a window
+        // resize the value sits still for a moment part-way through.
+        stable = now > 0 && now === last ? stable + 1 : 0;
+        last = now;
+        if (stable >= 3) return now;
+      }
+      return last;
+    };
+
+    // 5c2. Resampling must not produce horizontal banding.
+    //     Scaling through an offscreen buffer at the next integer multiple made
+    //     the final filter average less than one source pixel, so some source
+    //     rows claimed one output row and their neighbours claimed two. On her
+    //     cushion that read as bands that crawled up and down as she animated.
+    //
+    //     Measured with integer scaling off, so each size is actually rendered
+    //     at that size rather than snapped to a multiple.
+    await wc.executeJavaScript(`window.deskpet.saveSettings({ integerScale: false })`);
+    await sleep(400);
+    const banding = {};
+    for (const size of [208, 260, 300, 416]) {
+      await setSizeAndSettle(size);
+      banding[size] = await wc.executeJavaScript('window.__deskpet.rowBanding()');
+    }
+    // Calibration: nearest-neighbour at a fractional size has hard block edges,
+    // so it must score clearly worse than the smoothed default. Without a
+    // comparison there is no way to know the metric detects anything at all.
+    await wc.executeJavaScript(`window.deskpet.saveSettings({ renderMode: 'nearest' })`);
+    await sleep(600);
+    const nearestBanding = await wc.executeJavaScript('window.__deskpet.rowBanding()');
+    await wc.executeJavaScript(`window.deskpet.saveSettings({ renderMode: 'auto' })`);
+    await sleep(600);
+
+    const distinct = new Set(Object.values(banding).map((b) => b.energy)).size;
+    report.assertions.banding = { bySize: banding, nearestAt300: nearestBanding, distinctValues: distinct };
+
+    // 5c3. With integer scaling on -- the default -- every size must land on a
+    //     whole multiple of the cell, which is the only band-free enlargement.
+    await wc.executeJavaScript(`window.deskpet.saveSettings({ integerScale: true })`);
+    await sleep(400);
+    const snapped = [];
+    for (const want of [300, 520, 700, 900]) {
+      snapped.push({ want, got: await setSizeAndSettle(want) });
+    }
+    // And with it off, an arbitrary size is honoured again.
+    await wc.executeJavaScript(`window.deskpet.saveSettings({ integerScale: false })`);
+    await sleep(400);
+    const freeHeight = await setSizeAndSettle(300);
+    await wc.executeJavaScript(`window.deskpet.saveSettings({ integerScale: true })`);
+    await sleep(400);
+    await setSizeAndSettle(416);
+
+    report.assertions.integerScale = { snapped, freeHeight };
+    report.assertions.integerScaleOk =
+      // 300 -> 208, 520 -> 624, 700 -> 624, 900 -> 832: whole multiples only.
+      snapped.every((s) => s.got % 208 === 0)
+      && snapped[0].got === 208
+      && snapped[1].got === 624
+      && snapped[2].got === 624
+      && snapped[3].got === 832
+      && freeHeight === 300;
+
+    report.assertions.bandingOk = Object.values(banding).every((b) => b.energy > 0 && b.energy < b.limit)
+      && distinct > 1                                        // it actually measured something
+      && nearestBanding.energy > banding[300].energy;        // and it can tell the difference
+    write(`assert no resampling banding: ${report.assertions.bandingOk} ` +
+      `${JSON.stringify(report.assertions.banding)}`);
+    write(`assert integer scaling snaps sizes: ${report.assertions.integerScaleOk} ` +
+      `${JSON.stringify(report.assertions.integerScale)}`);
+
     // 5d. Sizing must be continuous, not snapped to a handful of steps.
+    //     Checked with integer scaling off, since that is the mode in which any
+    //     size is honoured; with it on the snapping is the point, and the
+    //     assertion above covers that.
+    await wc.executeJavaScript(`window.deskpet.saveSettings({ integerScale: false })`);
+    await sleep(400);
     const freeSizes = [];
     for (const want of [333, 400, 507]) {
-      await wc.executeJavaScript(`__deskpet.setSize(${want})`);
-      await sleep(700);
-      const got = await wc.executeJavaScript('window.__deskpet.info');
-      freeSizes.push({ want, got: Number(got.petBox.height.toFixed(1)) });
+      const got = await setSizeAndSettle(want);
+      freeSizes.push({ want, got });
     }
+    await wc.executeJavaScript(`window.deskpet.saveSettings({ integerScale: true })`);
+    await sleep(400);
+    await setSizeAndSettle(416);
+
     report.assertions.continuousSize = freeSizes;
     report.assertions.continuousSizeOk = freeSizes.every((s) => Math.abs(s.got - s.want) < 2);
     write(`assert continuous sizing: ${report.assertions.continuousSizeOk} ${JSON.stringify(freeSizes)}`);
@@ -350,9 +464,33 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
 
     const rendered = await wc.executeJavaScript('window.__deskpet.measureRegions()');
     const source = await wc.executeJavaScript('window.__deskpet.sampleAtlasRegions()');
+    // The bleed check is about the mood aura spilling past her silhouette, so
+    // it has to run with no particle effect on screen: a rain droplet or a
+    // sparkle drifting into a sample region is a false positive, and the
+    // `sad` overlay used above emits rain.
+    await wc.executeJavaScript('__deskpet.freeze(false)');
+    await wc.executeJavaScript(`
+      __deskpet.clearOverlay();
+      __deskpet.setBase('idle');
+      true
+    `);
+    await sleep(1400);
+    await wc.executeJavaScript('__deskpet.freeze(true)');
+    await sleep(250);
     const outside = await wc.executeJavaScript('window.__deskpet.measureBackgroundRegions()');
 
     const fidelity = [];
+    // Region tolerances are calibrated for a whole-number scale, where she is
+    // drawn 1:1 or N:1 against the source and only a sub-pixel sampling offset
+    // can move a block's mean. At a fractional device scale factor every size is
+    // resampled, so a flat region legitimately blends neighbouring source pixels
+    // and drifts a few more levels. Scale the bound accordingly -- this check
+    // exists to catch something *painting over* her (the mood tint and the old
+    // aura moved these regions by 11-30 levels), so a resampling allowance still
+    // leaves it plenty of teeth.
+    const wholeNumberScale =
+      Math.round(quality.box.height * quality.dpr) % 208 === 0;
+    const resampleAllowance = wholeNumberScale ? 1 : 3;
     for (const r of rendered) {
       if (r.name === 'outside-left') continue;
       const match = source.find((s) => s.name === r.name);
@@ -368,8 +506,8 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
         rendered: r.mean.slice(0, 3),
         atlas: match.mean.slice(0, 3),
         delta: Number(delta.toFixed(1)),
-        tolerance: r.tolerance,
-        withinTolerance: delta <= r.tolerance,
+        tolerance: Number((r.tolerance * resampleAllowance).toFixed(1)),
+        withinTolerance: delta <= r.tolerance * resampleAllowance,
       });
     }
     const offenders = fidelity.filter((f) => !f.withinTolerance);
@@ -390,13 +528,26 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     write(`assert no background bleed: ${report.assertions.bleedOk} ${JSON.stringify(report.assertions.bleed)}`);
 
     // 5g2. The opt-in tint must still work when switched on, and stay subtle.
+    //     It rides on the ambient effect, so it needs a state that *has* one —
+    //     against the plain idle pose there is no aura to tint and the check
+    //     would pass vacuously. The baseline is re-measured here rather than
+    //     reused from the fidelity check, because the pose changed in between.
+    await wc.executeJavaScript(`
+      __deskpet.clearOverlay();
+      __deskpet.setOverlay('sad', { duration: 600000 });
+      true
+    `);
+    await sleep(1200);
+    await wc.executeJavaScript('__deskpet.freeze(true)');
+    await sleep(200);
+    const tintBase = await wc.executeJavaScript('window.__deskpet.measureRegions()');
     await wc.executeJavaScript('window.deskpet.saveSettings({ moodTint: true })');
     await sleep(700);
     const tinted = await wc.executeJavaScript('window.__deskpet.measureRegions()');
 
     const shifts = [];
     for (const r of tinted) {
-      const base = rendered.find((b) => b.name === r.name);
+      const base = tintBase.find((b) => b.name === r.name);
       if (!base || r.mean[3] < 200) continue;
       const delta = Math.max(
         Math.abs(r.mean[0] - base.mean[0]),
@@ -603,11 +754,13 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     };
 
     // A normal stroll finishes on its own.
-    await wc.executeJavaScript('__deskpet.pauseBehavior(false); __deskpet.startWalk(); true');
+    await wc.executeJavaScript('__deskpet.pauseBehavior(false); true');
+    const walkStart = await wc.executeJavaScript('__deskpet.walkProbe()');
     await sleep(500);
     const duringWalk = await wc.executeJavaScript('window.__deskpet.info');
     const finished = await walkPoll(10_000);
     report.assertions.walkCompletes = {
+      start: walkStart,
       duringWalk: duringWalk.base,
       after: finished.base,
       elapsedMs: finished.elapsed,
@@ -657,8 +810,15 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     write(`assert state definitions valid: ${report.assertions.ambientCalmOk} ` +
       `problems=${JSON.stringify(stateProblems)} agitated=${JSON.stringify(agitated)}`);
 
-    // And she must render the calm lying row while reading.
-    await wc.executeJavaScript(`__deskpet.setBase('reading')`);
+    // And she must render the calm lying row while reading. The behaviour
+    // engine is paused first: `setBase` is ignored while an overlay is up, and
+    // an autonomous pose change mid-check would make this a coin flip.
+    await wc.executeJavaScript(`
+      __deskpet.pauseBehavior(true);
+      __deskpet.clearOverlay();
+      __deskpet.setBase('reading');
+      true
+    `);
     await sleep(600);
     const readingInfo = await wc.executeJavaScript('window.__deskpet.info');
     report.assertions.readingClip = readingInfo.clip;
@@ -916,6 +1076,331 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     write(`assert repeated moves keep the size: ${report.assertions.moveStableSizeOk} ` +
       `${JSON.stringify(report.assertions.moveStableSize)}`);
 
+    // 5o. The derived expressions have to land on her face.
+    //     This atlas has no angry or dizzy art, so those poses are an existing
+    //     clip plus an overlay positioned from `faceAnchorFor(row)`. Measuring
+    //     the drawn overlay is the only way to know it did not end up in her
+    //     hair, and the two framings (lying profile / seated frontal) have to
+    //     both work.
+    const emoteProbe = await wc.executeJavaScript(`
+      (() => {
+        const names = ['angry', 'hurt', 'proud', 'delighted', 'awkward', 'dizzy'];
+        const out = {};
+        for (const row of [0, 5, 8]) {
+          out[row] = {};
+          for (const n of names) {
+            const m = window.__deskpet.measureEmote(n, row, 0.5);
+            out[row][n] = m.bbox
+              ? { centre: m.bbox.centreNorm.map((v) => Number(v.toFixed(3))), w: m.bbox.w, h: m.bbox.h }
+              : null;
+          }
+        }
+        return out;
+      })()
+    `);
+
+    const emoteMismatches = [];
+    for (const [label, probe] of [['profile', emoteProbe[0]], ['front', emoteProbe[5]]]) {
+      for (const [name, m] of Object.entries(probe)) {
+        if (!m) { emoteMismatches.push(`${label}/${name}: nothing drawn`); continue; }
+        // Everything must at least be inside the sprite and a sane size. The
+        // exact centring is checked below, per layer, not per composite.
+        if (m.w < 6 || m.h < 6) emoteMismatches.push(`${label}/${name}: only ${m.w}x${m.h}px`);
+        if (m.centre[0] < 0 || m.centre[0] > 1 || m.centre[1] < -0.1 || m.centre[1] > 1) {
+          emoteMismatches.push(`${label}/${name}: outside the sprite at ${m.centre}`);
+        }
+      }
+    }
+
+    // Marks split into two families. Facial ones belong on her face; the anger
+    // mark and the pride star belong *above* her head, which is where the idiom
+    // puts them, so they are checked against the head top instead.
+    const marks = await wc.executeJavaScript(`
+      (() => {
+        const out = {};
+        for (const [label, row] of [['profile', 0], ['front', 5]]) {
+          out[label] = {};
+          for (const n of ['blush', 'teary', 'prideStar', 'angerMark']) {
+            const m = window.__deskpet.measureEmote(n, row, 0.5);
+            out[label][n] = m.bbox
+              ? { centre: m.bbox.centreNorm.map((v) => Number(v.toFixed(3))), w: m.bbox.w, h: m.bbox.h }
+              : null;
+          }
+        }
+        return out;
+      })()
+    `);
+    const faceWant = { profile: [0.41, 0.285], front: [0.49, 0.32] };
+    for (const [label, probe] of Object.entries(marks)) {
+      const [wx, wy] = faceWant[label];
+      for (const name of ['blush', 'teary']) {
+        const m = probe[name];
+        if (!m) { emoteMismatches.push(`${label}/${name}: nothing drawn`); continue; }
+        if (Math.abs(m.centre[0] - wx) > 0.16 || Math.abs(m.centre[1] - wy) > 0.16) {
+          emoteMismatches.push(`${label}/${name}: at ${m.centre} want ~[${wx}, ${wy}]`);
+        }
+      }
+      for (const name of ['prideStar', 'angerMark']) {
+        const m = probe[name];
+        if (!m) { emoteMismatches.push(`${label}/${name}: nothing drawn`); continue; }
+        // Above the top of her head (0.05), roughly over her, and not outside.
+        if (m.centre[1] > 0.14) emoteMismatches.push(`${label}/${name}: at y=${m.centre[1]}, want above the head`);
+        if (Math.abs(m.centre[0] - wx) > 0.34) {
+          emoteMismatches.push(`${label}/${name}: at x=${m.centre[0]}, want near her head`);
+        }
+      }
+    }
+
+    report.assertions.emotes = { composite: emoteProbe, marks, mismatches: emoteMismatches };
+    report.assertions.emotesOk = emoteMismatches.length === 0;
+    write(`assert derived expressions land correctly: ${report.assertions.emotesOk} ` +
+      `${emoteMismatches.length ? emoteMismatches.join(' | ') : 'all within tolerance'}`);
+    write(`   marks ${JSON.stringify(marks.front)}`);
+
+    // 5p. Touch feedback and the spin easter egg.
+    //     The physics is driven directly rather than through synthetic mouse
+    //     events, because a synthesised `mousemove` carries no `movementX` and
+    //     the drag lean has nothing to read.
+    await wc.executeJavaScript('__deskpet.clearOverlay(); __deskpet.pauseBehavior(true)');
+    await sleep(300);
+    const idlePose = await wc.executeJavaScript('__deskpet.gestures');
+
+    await wc.executeJavaScript('__deskpet.press()');
+    await sleep(60);
+    const pressedPose = await wc.executeJavaScript('__deskpet.gestures');
+
+    // Release and watch the spring: it has to overshoot the other way (she
+    // stretches past her resting height) before settling. The extremes are
+    // recorded inside the render loop, because the overshoot only lasts a few
+    // tens of milliseconds and polling over IPC would miss it.
+    await wc.executeJavaScript('__deskpet.resetSquashRange(); __deskpet.release()');
+    await sleep(900);
+    const released = await wc.executeJavaScript('__deskpet.gestures');
+    const settledPose = released;
+
+    await wc.executeJavaScript('__deskpet.resetSquashRange(); __deskpet.land()');
+    await sleep(320);
+    const landedPose = await wc.executeJavaScript('__deskpet.gestures');
+    await sleep(1100);
+
+    report.assertions.touchFeedback = {
+      idle: idlePose.squash,
+      pressed: Number(pressedPose.squash.toFixed(4)),
+      releaseOvershoot: Number(released.minSquash.toFixed(4)),
+      // The peak, not an instant: the spring has already decayed by the time a
+      // round trip completes.
+      landedPeak: Number(landedPose.maxSquash.toFixed(4)),
+      settled: Number(settledPose.squash.toFixed(4)),
+    };
+    report.assertions.touchFeedbackOk = pressedPose.squash > 0.05   // pressed flatter
+      && released.minSquash < -0.02                                 // then stretched past rest
+      && landedPose.maxSquash > 0.12                                // landing hits hardest
+      && Math.abs(settledPose.squash) < 0.01;                       // and it all relaxes
+
+    // Circling the cursor has to wind her up, and it must take three turns, not
+    // one stray arc across the desk. Coordinates are absolute screen positions,
+    // because that is what the detector compares against her centre.
+    const spinBefore = await wc.executeJavaScript('__deskpet.gestures');
+    const centre = await wc.executeJavaScript('__deskpet.centre');
+    const orbitScript = (turns, steps) => `
+      (() => {
+        const c = window.__deskpet;
+        const o = ${JSON.stringify(centre)};
+        for (let i = 0; i <= ${steps}; i += 1) {
+          const a = (i / ${steps}) * Math.PI * 2 * ${turns};
+          c.orbit(o.x + Math.cos(a) * 150, o.y + Math.sin(a) * 150);
+        }
+        return true;
+      })()
+    `;
+    await wc.executeJavaScript(orbitScript(2, 40));
+    const spinPartial = await wc.executeJavaScript('__deskpet.gestures');
+    await wc.executeJavaScript(orbitScript(3.4, 80));
+    const spinFull = await wc.executeJavaScript('__deskpet.gestures');
+    await sleep(400);
+    const spinOverlay = await wc.executeJavaScript('window.__deskpet.info');
+
+    // The wobble has to decay. Measured as a peak over a window rather than at
+    // one instant: it is a sine, so any single sample can land on a zero
+    // crossing and look like "no wobble at all".
+    await wc.executeJavaScript('__deskpet.resetSquashRange()');
+    await sleep(700);
+    const wobbleEarly = await wc.executeJavaScript('__deskpet.gestures.maxWobbleDeg');
+    await wc.executeJavaScript('__deskpet.resetSquashRange()');
+    await sleep(1600);
+    const wobbleLate = await wc.executeJavaScript('__deskpet.gestures.maxWobbleDeg');
+    const dizzyMs = await wc.executeJavaScript('__deskpet.dizzyMs');
+
+    report.assertions.spin = {
+      partialTurns: 2,
+      partialSpinning: spinPartial.spinning,
+      triggeredSpinning: spinFull.spinning,
+      duringOverlay: spinOverlay.overlay,
+      wobblePeakDeg: { early: wobbleEarly, late: wobbleLate },
+      dizzyMs,
+      beforeAccum: Number(spinBefore.spinAccum.toFixed(2)),
+    };
+    report.assertions.spinOk = spinPartial.spinning === false      // two turns is not enough
+      && spinFull.spinning === true                                // three is
+      && spinOverlay.overlay === 'dizzy'                           // straight to the wobble
+      && wobbleEarly > 3                                           // it is visible
+      && wobbleLate < wobbleEarly * 0.6                            // and it dies down
+      && dizzyMs === 3000;                                         // over 3s
+
+    // Her temper, driven through the REAL pointer handlers.
+    // Driving `temper()` directly proved nothing about the wiring: the emotion
+    // was being fired and then immediately overwritten by the ordinary
+    // click/drag feedback in the same handler, which is exactly why it was
+    // never visible. Synthetic mouse events exercise the whole path.
+    await wc.executeJavaScript('__deskpet.clearOverlay(); __deskpet.pauseBehavior(true)');
+    await sleep(300);
+
+    const dragCycles = [];
+    for (let i = 0; i < 3; i += 1) {
+      await wc.executeJavaScript('__deskpet.pointerDrag(60, 20)');
+      await sleep(220);
+      dragCycles.push(await wc.executeJavaScript('window.__deskpet.info.overlay'));
+    }
+    const temperState = await wc.executeJavaScript('__deskpet.temperState');
+
+    // Clicking: four pokes in a row should make her smug, and the reaction must
+    // survive rather than being replaced by the greeting.
+    await wc.executeJavaScript('__deskpet.clearOverlay()');
+    await sleep(200);
+    const clickCycles = [];
+    for (let i = 0; i < 4; i += 1) {
+      await wc.executeJavaScript('__deskpet.pointerClick()');
+      await sleep(200);
+      clickCycles.push(await wc.executeJavaScript('window.__deskpet.info.overlay'));
+    }
+    await wc.executeJavaScript('__deskpet.clearOverlay()');
+    const temperPools = await wc.executeJavaScript('__deskpet.temperPools()');
+
+    report.assertions.temper = {
+      dragOverlays: dragCycles,
+      temperEvents: temperState.events,
+      clickOverlays: clickCycles,
+      pools: temperPools,
+    };
+    report.assertions.temperOk =
+      // Three real drags must produce the anger, and it must still be the
+      // active overlay after the handler that caused it has finished.
+      dragCycles[2] === 'angry'
+      && dragCycles[1] !== 'angry'
+      && temperState.events.drag === 0      // consumed by the trigger
+      // Four real clicks must produce smugness, likewise unclobbered.
+      && clickCycles[3] === 'proud'
+      && temperPools.length === 4;
+
+    write(`assert touch feedback: ${report.assertions.touchFeedbackOk} ` +
+      `${JSON.stringify(report.assertions.touchFeedback)}`);
+    write(`assert spinning her around: ${report.assertions.spinOk} ` +
+      `${JSON.stringify(report.assertions.spin)}`);
+    write(`assert her temper: ${report.assertions.temperOk} ` +
+      `${JSON.stringify(report.assertions.temper)}`);
+    await wc.executeJavaScript('__deskpet.clearOverlay()');
+
+    // 5q. Being dragged must not change her pose.
+    //     Facing the direction of travel was tried and removed: the left/right
+    //     artwork is the walking sway, so swapping her out of the pose she was
+    //     holding read as broken rather than as being carried. She keeps doing
+    //     whatever she was doing; only the squash and the drop change.
+    await wc.executeJavaScript('__deskpet.clearOverlay(); __deskpet.pauseBehavior(true)');
+    await sleep(300);
+    await wc.executeJavaScript(`__deskpet.setBase('reading')`);
+    await sleep(400);
+    const poseBeforeDrag = await wc.executeJavaScript('window.__deskpet.info');
+    // A long, direction-changing drag: it must leave the pose and clip alone.
+    for (let i = 0; i < 40; i += 1) {
+      await wc.executeJavaScript(`__deskpet.drag(${i < 20 ? 14 : -14})`);
+      await sleep(20);
+    }
+    const poseDuringDrag = await wc.executeJavaScript('window.__deskpet.info');
+    await wc.executeJavaScript('__deskpet.release()');
+    await sleep(200);
+    report.assertions.dragKeepsPose = {
+      beforeBase: poseBeforeDrag.base,
+      beforeClip: poseBeforeDrag.clip,
+      duringBase: poseDuringDrag.base,
+      duringClip: poseDuringDrag.clip,
+      dragging: true,
+    };
+    report.assertions.dragKeepsPoseOk = poseBeforeDrag.base === 'reading'
+      && poseDuringDrag.base === poseBeforeDrag.base
+      && poseDuringDrag.clip === poseBeforeDrag.clip;
+    await wc.executeJavaScript('__deskpet.release(); __deskpet.clearOverlay()');
+
+    // Every settle pose and every emotional state needs enough lines that the
+    // repetition is not obvious, and the temper pools have to exist at all.
+    const linePools = await wc.executeJavaScript('__deskpet.mutterKinds()');
+    const lineThin = Object.entries(linePools).filter(([, n]) => n < 3).map(([k]) => k);
+    const lineTotal = Object.values(linePools).reduce((a, b) => a + b, 0);
+    report.assertions.linePools = { pools: linePools, total: lineTotal, thin: lineThin };
+    report.assertions.linePoolsOk = lineThin.length === 0
+      && Object.keys(linePools).length >= 13
+      && lineTotal >= 100;
+    write(`assert dragging keeps her pose: ${report.assertions.dragKeepsPoseOk} ` +
+      `${JSON.stringify(report.assertions.dragKeepsPose)}`);
+    write(`assert line pools are deep enough: ${report.assertions.linePoolsOk} ` +
+      `${Object.keys(linePools).length} pools, ${lineTotal} lines` +
+      `${lineThin.length ? ` THIN: ${lineThin}` : ''}`);
+
+    // 5g3. The default size must be a 1:1 blit against the source art.
+    //    208 is the atlas cell height, so every source pixel lands on exactly
+    //    208/208 of a screen pixel at 100% scaling. Anything else resamples.
+    const defaultSize = require('./config').DEFAULT_SETTINGS.sizePx;
+    await wc.executeJavaScript('__deskpet.setSize(208)');
+    await sleep(700);
+    const native = await wc.executeJavaScript(`({
+      box: window.__deskpet.info.petBox,
+      inner: window.__deskpet.info.viewport,
+      dpr: window.__deskpet.info.dpr,
+    })`);
+    report.assertions.nativeSize = {
+      defaultSizePx: defaultSize,
+      box: native.box,
+      viewport: native.inner,
+      dpr: native.dpr,
+    };
+    report.assertions.nativeSizeOk = defaultSize === 208
+      && Math.round(native.box.width) === 192
+      && Math.round(native.box.height) === 208
+      // A whole-number device origin is what keeps a 1:1 blit from being
+      // filtered across two pixels.
+      && Number.isInteger(native.box.x * native.dpr)
+      && Number.isInteger(native.box.y * native.dpr);
+    write(`assert default size is pixel-exact: ${report.assertions.nativeSizeOk} ` +
+      `${JSON.stringify(report.assertions.nativeSize)}`);
+    await wc.executeJavaScript('__deskpet.setSize(416)');
+    await sleep(500);
+
+    // 5r. An ambient line must always time out.
+    //     `scheduleHide` used to bail out whenever the streaming flag was set,
+    //     so a stale flag left random one-liners on screen indefinitely. The
+    //     flag may only protect a reply.
+    await wc.executeJavaScript('__deskpet.forceBusy(true)');
+    // Dismiss whatever the previous block left on screen first: `sayLine`
+    // deliberately refuses to talk over a reply, so without this the mutter is
+    // suppressed and the assertion measures the wrong bubble.
+    await wc.executeJavaScript('__deskpet.hideBubble()');
+    await sleep(200);
+    await wc.executeJavaScript(`__deskpet.mutter('reading')`);
+    await sleep(300);
+    const ambientWhileBusy = await wc.executeJavaScript('window.__deskpet.info');
+    await sleep(6200);
+    const afterAmbientWait = await wc.executeJavaScript('window.__deskpet.info');
+    await wc.executeJavaScript('__deskpet.forceBusy(false)');
+    report.assertions.ambientExpires = {
+      shownWhileBusy: ambientWhileBusy.bubbleVisible,
+      kind: ambientWhileBusy.bubbleKind,
+      stillVisibleAfter6s: afterAmbientWait.bubbleVisible,
+    };
+    report.assertions.ambientExpiresOk = ambientWhileBusy.bubbleVisible === true
+      && ambientWhileBusy.bubbleKind === 'ambient'
+      && afterAmbientWait.bubbleVisible === false;
+    write(`assert ambient lines always expire: ${report.assertions.ambientExpiresOk} ` +
+      `${JSON.stringify(report.assertions.ambientExpires)}`);
+
     // 5h. Prove the console capture itself works. Without this, a zero-error
     //     result is indistinguishable from a broken capture sink.
     await wc.executeJavaScript(`console.error('${PROBE}')`);
@@ -1036,20 +1521,31 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     report.error = err && err.stack ? err.stack : String(err);
     write(`ERROR: ${report.error}`);
   } finally {
-    // Judge by scanning the assertions instead of listing them by hand.
-    // The hand-maintained list silently passed a failing check the moment a new
-    // assertion was added and forgotten -- which is exactly what happened.
+    // Judge by scanning every boolean assertion, not a hand-written list and
+    // not by name suffix. Matching on `*Ok` silently ignored `walkMoved`,
+    // `windowVisible` and `thinkingPersists` for several runs -- a failing
+    // check that the report called a pass.
     const a = report.assertions || {};
-    const failed = [
-      ...Object.entries(a).filter(([k, v]) => k.endsWith('Ok') && v !== true).map(([k]) => k),
-      ...Object.entries(a).filter(([k, v]) => k.endsWith('Handled') && v === false).map(([k]) => k),
-    ];
-    if (a.settingsWindow === false) failed.push('settingsWindow');
+    const failed = Object.entries(a)
+      .filter(([, value]) => value === false)
+      .map(([key]) => key);
+    const consoleErrorsNow = consoleErrors.slice();
 
-    report.consoleErrors = consoleErrors.slice();
+    report.consoleErrors = consoleErrorsNow;
     report.failedAssertions = failed;
-    report.ok = !report.error && consoleErrors.length === 0 && failed.length === 0;
-    write(failed.length ? `CHECKS FAILED: ${failed.join(', ')}` : 'ALL CHECKS PASSED');
+    report.ok = !report.error && consoleErrorsNow.length === 0 && failed.length === 0;
+    // The verdict line has to agree with `ok`, or a run can print PASS with a
+    // red report sitting right next to it.
+    if (report.ok) {
+      write('ALL CHECKS PASSED');
+    } else {
+      const reasons = [
+        ...failed,
+        ...(consoleErrorsNow.length ? [`${consoleErrorsNow.length} console error(s)`] : []),
+        ...(report.error ? ['the run threw'] : []),
+      ];
+      write(`CHECKS FAILED: ${reasons.join(', ')}`);
+    }
 
     fs.writeFileSync(REPORT, `${JSON.stringify(report, null, 2)}\n`);
     if (config) config.update({ position: null }); // do not persist test placement

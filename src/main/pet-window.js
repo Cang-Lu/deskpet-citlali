@@ -3,6 +3,22 @@
 const { BrowserWindow, screen } = require('electron');
 
 const CELL = { width: 192, height: 208 };
+
+/**
+ * Whole multiples of the cell are the only sizes at which pixel art can be
+ * enlarged without resampling, so the size she is *drawn* at and the size the
+ * window is *built* for have to agree on the same rule. Rendering at a snapped
+ * 624 inside a window sized for 520 left the sprite taller than its own window,
+ * and the renderer's fit-clamp then shrank it back to a meaningless 555.
+ *
+ * The rule itself is authoritative in `src/shared/pet-spec.js`
+ * (`snapToCellMultiple`); this is the CommonJS mirror of those three lines.
+ */
+function snapSizePx(value, integerScale) {
+  const n = Number(value) || CELL.height;
+  if (integerScale === false || n <= CELL.height) return n;
+  return Math.round(n / CELL.height) * CELL.height;
+}
 /** Vertical room reserved above the sprite for the speech bubble + composer. */
 const BUBBLE_ZONE = 172;
 /**
@@ -53,7 +69,7 @@ class PetWindow {
    * The extra margin covers the rounding-down at fractional scale factors.
    */
   get size() {
-    const target = this.sizePx;
+    const target = snapSizePx(this.sizePx, this.config.get().integerScale);
     const spriteWidth = Math.round(CELL.width * (target / CELL.height)) + 36;
     return {
       width: Math.round(Math.max(300, spriteWidth)),
@@ -221,7 +237,26 @@ class PetWindow {
     const previousHeight = this.win.getBounds().height;
     const { width, height } = this.size;
     this.stopWalk({ notify: true });
-    this.win.setBounds({ x, y: Math.round(y + (previousHeight - height)), width, height });
+
+    /**
+     * Keep her inside the work area after the resize.
+     *
+     * Growing while parked against an edge used to push part of the window off
+     * the screen. That is not only ugly: the walk controller clamps to
+     * `workArea.width - windowWidth`, so a window sitting beyond that bound
+     * "arrives" on the very first step and snaps sideways — she would refuse to
+     * walk at all until dragged back into range.
+     */
+    const area = screen.getDisplayNearestPoint({ x, y }).workArea;
+    const targetX = Math.min(area.x + area.width - width, Math.max(area.x, x));
+    const bottom = Math.min(area.y + area.height, Math.max(area.y + height, y + previousHeight));
+
+    this.win.setBounds({
+      x: Math.round(targetX),
+      y: Math.round(bottom - height),
+      width,
+      height,
+    });
     this.emitBounds();
   }
   /**

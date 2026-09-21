@@ -134,6 +134,36 @@ export const ROW_MOTION = {
 export const CALM_MOTION_LIMIT = 2600;
 
 /**
+ * Where her face is, in cell-normalised coordinates (0..1).
+ *
+ * Measuring the silhouette is not enough on its own: the top of her outline is
+ * *hair* — two side buns when she is seated, a hat ring when she is lying — so
+ * "centroid of the topmost opaque pixels" lands in her hair rather than on a
+ * cheek. These numbers are read off rendered screenshots instead.
+ *
+ * What actually matters is the body framing, and the atlas only has two:
+ * rows 0/3/4/7 are a **left-facing profile** (one eye, one visible cheek), the
+ * rest are **frontal**. Positioning an expression correctly in both is the
+ * difference between a blush on her cheek and a blush on the back of her head.
+ */
+export const FACE_ANCHORS = {
+  /** Lying down, seen from the side. */
+  profile: { x: 0.41, y: 0.285, width: 0.13, top: 0.05, view: 'profile' },
+  /** Seated on the cushion, facing the screen. */
+  front: { x: 0.49, y: 0.32, width: 0.17, top: 0.05, view: 'front' },
+};
+
+/** Which framing each atlas row uses. */
+export const ROW_FRAMING = {
+  0: 'profile', 1: 'front', 2: 'front', 3: 'profile', 4: 'profile',
+  5: 'front', 6: 'front', 7: 'profile', 8: 'front', 9: 'front', 10: 'front',
+};
+
+/** Face anchor for a row; unknown rows fall back to the frontal framing. */
+export function faceAnchorFor(row) {
+  return FACE_ANCHORS[ROW_FRAMING[row] || 'front'];
+}
+/**
  * Convert a screen-space vector into a look-direction index.
  *
  * Screen space has +y pointing down, so "up" is a negative dy. The mapping is
@@ -174,7 +204,14 @@ export const DEFAULT_MOOD = 'neutral';
 /* ------------------------------------------------------------------ */
 
 /** Sprite height in CSS pixels when the user has not chosen anything. */
-export const DEFAULT_SPRITE_HEIGHT = 416;
+/**
+ * Fallback sprite height.
+ *
+ * Equal to the atlas cell height on purpose: that is the size at which the
+ * sprite is drawn 1:1 against the source art, so the default is pixel-perfect
+ * rather than resampled.
+ */
+export const DEFAULT_SPRITE_HEIGHT = 208;
 
 export const MIN_SPRITE_HEIGHT = 96;
 export const MAX_SPRITE_HEIGHT = 900;
@@ -194,6 +231,27 @@ export function fitSpriteSize({ targetHeight, maxWidth, maxHeight }) {
     height = width * (CELL.height / CELL.width);
   }
   return { width: Math.max(1, width), height: Math.max(1, height) };
+}
+
+/**
+ * Round a requested height to the nearest whole multiple of the cell.
+ *
+ * This is the only way to upscale pixel art without resampling. At 208, 416,
+ * 624 every source pixel becomes a clean NxN block; at any other size the rows
+ * have to be weighted unevenly -- 2,3,2,3 ... -- which reads as faint horizontal
+ * banding that crawls as the artwork animates. No filter avoids it: a smoother
+ * one only trades the bands for blur.
+ *
+ * Heights at or below one cell are left alone. *Downscaling* averages more than
+ * one source pixel per output pixel, so its weights are well behaved.
+ *
+ * @param {number} targetHeight
+ * @returns {number}
+ */
+export function snapToCellMultiple(targetHeight) {
+  const value = Number(targetHeight);
+  if (!Number.isFinite(value) || value <= CELL.height) return value;
+  return Math.round(value / CELL.height) * CELL.height;
 }
 
 /**

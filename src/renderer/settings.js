@@ -33,6 +33,7 @@ const fields = {
   sizeValue: el('sizeValue'),
   sizeHint: el('sizeHint'),
   renderMode: el('renderMode'),
+  integerScale: el('integerScale'),
   defringe: el('defringe'),
   moodTint: el('moodTint'),
   alwaysOnTop: el('alwaysOnTop'),
@@ -82,6 +83,7 @@ function render(settings, { resetKeyField = false } = {}) {
   fields.sizePx.value = String(sizePx);
   fields.sizeValue.textContent = `${sizePx} px`;
   fields.renderMode.value = settings.renderMode === 'nearest' ? 'nearest' : 'auto';
+  fields.integerScale.checked = settings.integerScale !== false;
   fields.defringe.checked = settings.defringe !== false;
   fields.moodTint.checked = settings.moodTint !== false;
   fields.alwaysOnTop.checked = Boolean(settings.alwaysOnTop);
@@ -189,6 +191,7 @@ function collect() {
     workMaxTokens: Number(fields.workMaxTokens.value) || 2400,
     sizePx: Number(fields.sizePx.value) || DEFAULT_SPRITE_HEIGHT,
     renderMode: fields.renderMode.value,
+    integerScale: fields.integerScale.checked,
     defringe: fields.defringe.checked,
     moodTint: fields.moodTint.checked,
     alwaysOnTop: fields.alwaysOnTop.checked,
@@ -288,7 +291,7 @@ function wireHandlers() {
   for (const id of auto) {
     el(id).addEventListener('change', () => save(collect()));
   }
-  for (const id of ['alwaysOnTop', 'clickThrough', 'autoLaunch', 'defringe', 'moodTint', 'workMode',
+  for (const id of ['alwaysOnTop', 'clickThrough', 'autoLaunch', 'integerScale', 'defringe', 'moodTint', 'workMode',
     'proactiveEnabled', 'wander', 'gazeFollow', 'idleChatter', 'balanceEnabled']) {
     el(id).addEventListener('change', () => {
       updateSubState();

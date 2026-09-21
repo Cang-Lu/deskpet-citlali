@@ -96,16 +96,24 @@
           <span class="hint inline">无级可调，也可以把鼠标放到她身上按 Ctrl+滚轮</span>
         </div>
 
-        <label class="field">
-          <span>渲染方式</span>
-          <select id="renderMode">
-            <option value="auto">超采样自适应（推荐，任意尺寸都清晰）</option>
-            <option value="nearest">硬边像素（保留锯齿感）</option>
-          </select>
+        <label class="switch">
+          <input id="integerScale" type="checkbox" />
+          <span>整数倍缩放（推荐，像素画唯一没有重采样条纹的方式）</span>
         </label>
         <p class="hint">
-          推荐模式会把角色按整数倍超采样后再缩放到你要的尺寸：正好整数倍时是像素级 1:1，其余尺寸平滑过渡，所以大小可以随便拖。
+          图片只有 208 像素高，放大到 <b>208 / 416 / 624 / 832</b> 时每个像素正好摊成完整的方块，绝对清晰。
+          其他尺寸必须把像素行摊得不均匀（2,3,2,3…），看起来就是淡淡的横向条纹，而且会随动作上下漂移——
+          这是像素画放大的固有限制，换任何滤镜都只是把条纹换成模糊。<br />
+          关掉这个开关就能拖到任意尺寸，代价是那些尺寸会有条纹。
         </p>
+
+        <label class="field">
+          <span>像素边缘</span>
+          <select id="renderMode">
+            <option value="auto">平滑（默认）</option>
+            <option value="nearest">硬边（保留锯齿感）</option>
+          </select>
+        </label>
 
         <label class="switch">
           <input id="defringe" type="checkbox" />

@@ -2,9 +2,9 @@ import {
   ATLAS,
   CELL,
   CLIPS,
+  faceAnchorFor,
   lookCell,
   defringe,
-  supersampleFactor,
 } from '../shared/pet-spec.js';
 
 /** Load an <img> and resolve once the bitmap is actually decoded. */
@@ -36,6 +36,16 @@ export class Atlas {
     this.cellH = CELL.height;
     this.width = ATLAS.width;
     this.height = ATLAS.height;
+  }
+
+  /**
+   * Where her face is in a given row, in cell-normalised coordinates.
+   *
+   * Facial overlays are positioned from this rather than from fixed offsets,
+   * because the atlas mixes a left-facing profile with a frontal pose.
+   */
+  anchorFor(row) {
+    return faceAnchorFor(row);
   }
 
   /**
@@ -82,21 +92,31 @@ export class Atlas {
 }
 
 /**
- * Draws atlas cells at arbitrary sizes without the usual pixel-art tradeoff.
+ * Draws atlas cells at arbitrary sizes.
  *
- * The cell is rasterised once into an offscreen buffer at an integer multiple
- * of its native size (nearest-neighbour, so it stays sharp), and that buffer is
- * then scaled to the exact on-screen size with high-quality filtering. Exact
- * multiples end up as a 1:1 blit; everything in between is supersampled rather
- * than stretched, so intermediate sizes are smooth instead of jagged. The
- * buffer is memoised per cell + factor, so a frame costs one extra drawImage.
+ * Two cases, and only two:
+ *
+ * - **Whole-number scale** (208, 416, 624 at 100%): nearest-neighbour straight
+ *   from the source is exact, so every source pixel becomes a clean NxN block.
+ * - **Anything else**: the source cell is drawn directly and the browser's
+ *   high-quality filter interpolates it.
+ *
+ * There used to be a third path in between: rasterise into an offscreen buffer
+ * at the next integer multiple, then scale that buffer down to the target. It
+ * was meant to make intermediate sizes smooth, and it did the opposite. At a
+ * target of 300 the buffer is a 2x *nearest* copy of the source -- hard 2x2
+ * blocks -- and the final downscale only averages 1.39 buffer pixels, which is
+ * **less than one source pixel**. The filter cannot cover the block edges, so
+ * some source pixels claim one output pixel and their neighbours claim two.
+ * On a large flat area like her cushion that reads as horizontal banding, and
+ * because the artwork animates the bands appear to crawl up and down.
+ *
+ * Going straight from the source removes the block structure entirely: there is
+ * nothing left for the filter to fail to hide.
  */
 export class SpriteRenderer {
   constructor(atlas) {
     this.atlas = atlas;
-    this.buffer = document.createElement('canvas');
-    this.bctx = this.buffer.getContext('2d');
-    this.key = null;
   }
 
   /**
@@ -107,29 +127,18 @@ export class SpriteRenderer {
    * @param {number} [alpha]
    */
   drawCell(ctx, cell, box, dpr, alpha = 1) {
-    const factor = supersampleFactor({ targetHeight: box.height, dpr });
-    const bw = this.atlas.cellW * factor;
-    const bh = this.atlas.cellH * factor;
-
-    if (this.buffer.width !== bw || this.buffer.height !== bh) {
-      this.buffer.width = bw;
-      this.buffer.height = bh;
-      this.key = null;
-    }
-
-    const key = `${cell.row}:${cell.col}:${factor}`;
-    if (this.key !== key) {
-      this.bctx.imageSmoothingEnabled = false;
-      this.bctx.clearRect(0, 0, bw, bh);
-      this.atlas.draw(this.bctx, cell.row, cell.col, 0, 0, bw, bh);
-      this.key = key;
-    }
+    const deviceW = Math.round(box.width * dpr);
+    const deviceH = Math.round(box.height * dpr);
+    const wholeNumber = deviceH > 0
+      && deviceH % this.atlas.cellH === 0
+      && deviceW % this.atlas.cellW === 0
+      && deviceH / this.atlas.cellH === deviceW / this.atlas.cellW;
 
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingEnabled = !wholeNumber;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(this.buffer, 0, 0, bw, bh, box.x, box.y, box.width, box.height);
+    this.atlas.draw(ctx, cell.row, cell.col, box.x, box.y, box.width, box.height);
     ctx.restore();
   }
 }

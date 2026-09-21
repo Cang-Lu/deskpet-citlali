@@ -140,7 +140,12 @@ export class Ui {
    */
   scheduleHide(ms = 0) {
     this.clearHideTimer();
-    if (this.busy || this.pinned) return 0;
+    if (this.pinned) return 0;
+    // `busy` exists so a reply does not vanish while it is still streaming.
+    // It must not apply to her ambient muttering: anything that leaves that flag
+    // set -- a cancelled stream, a missed event -- would then pin every random
+    // one-liner on screen indefinitely, which is exactly what was reported.
+    if (this.busy && this.kind === 'reply') return 0;
     const delay = ms || (this.kind === 'reply'
       ? Ui.replyHideDelay(this.bubbleText.textContent)
       : AMBIENT_HIDE_MS);

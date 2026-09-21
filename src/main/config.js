@@ -46,9 +46,25 @@ const DEFAULT_SETTINGS = {
   workMaxTokens: 2400,
 
   // --- appearance ---
-  /** Target sprite height in CSS px; snapped to whole device pixels. */
-  sizePx: 416,
-  /** 'auto' = supersampled (any size stays clean), 'nearest' = hard pixel edges. */
+  /**
+   * Target sprite height in CSS px, snapped to whole device pixels.
+   *
+   * The default equals the atlas cell height. That is the one size at which she
+   * is drawn 1:1 against the source art — every source pixel lands on exactly
+   * one screen pixel — so out of the box she is pixel-perfect rather than
+   * resampled. The slider still goes up to 900.
+   */
+  sizePx: 208,
+  /**
+   * Keep her on whole multiples of the atlas cell.
+   *
+   * 208 / 416 / 624 / 832 are the only sizes at which every source pixel maps
+   * onto a clean NxN block. Any other size has to weight the source rows
+   * unevenly -- 2,3,2,3 ... -- which reads as faint horizontal banding that
+   * crawls as she animates. Turning this off unlocks every size at that cost.
+   */
+  integerScale: true,
+  /** 'auto' = filtered (any size stays clean), 'nearest' = hard pixel edges. */
   renderMode: 'auto',
   /** Strip the dark matte out of the atlas's anti-aliased edges. */
   defringe: true,
@@ -195,7 +211,7 @@ function migrate(settings, from) {
   if (next.renderMode === 'crisp' || next.renderMode === 'smooth') {
     next.renderMode = 'auto';
   }
-  next.sizePx = Math.min(900, Math.max(96, Math.round(Number(next.sizePx) || 416)));
+  next.sizePx = Math.min(900, Math.max(96, Math.round(Number(next.sizePx) || 208)));
   delete next.scale;
 
   next.settingsVersion = SETTINGS_VERSION;

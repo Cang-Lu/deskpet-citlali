@@ -68,6 +68,12 @@ const MUTTERS = {
     '这一段我看了三遍了，还是想哭。',
     '……新出的那本还没看完呢。',
     '这个作者，下一本什么时候出啊。',
+    '这个转折……我早猜到了。',
+    '果然，女二号才是最好的。',
+    '……下一页呢，下一页呢。',
+    '唉，书里的人怎么都这么别扭。',
+    '这段写进我的笔记本里。',
+    '……看到这里，我居然有点羡慕。',
   ],
   lyingIdle: [
     '……今天也挺闲的。',
@@ -77,6 +83,11 @@ const MUTTERS = {
     '烟谜主也是要休息的。',
     '窗外那朵云，形状有点意思。',
     '……要不要去泡杯茶。',
+    '嗯，今天的光线刚刚好。',
+    '……总觉得忘了点什么。',
+    '你这椅子，坐久了会腰疼的。',
+    '烟谜主的日常工作，就是没有工作。',
+    '……要不要跟你说件很久以前的事。',
   ],
   looking: [
     '……嗯？',
@@ -84,12 +95,22 @@ const MUTTERS = {
     '……看错了。',
     '有人来了？',
     '……没什么事。',
+    '刚刚是不是闪了一下。',
+    '……风声而已。',
+    '嗯，我什么都没看见。',
+    '……谁在叫我。',
+    '别躲了，我听见了。',
   ],
   quiet: [
     '……在想事情。',
     '嗯……',
     '让我静静。',
     '……别打扰我。',
+    '……这件事得好好想想。',
+    '嗯，你不懂。',
+    '……几百年了，还是没想明白。',
+    '别看我，我没发呆。',
+    '……只是有点懒得说话。',
   ],
   nodding: [
     '……啊，眼睛睁不开了。',
@@ -97,28 +118,59 @@ const MUTTERS = {
     '熬夜看小说的后果，就是白天困成这样。',
     '唔……让我眯一会儿。',
     '……刚才看到哪了。',
+    '唔……这段字怎么在动。',
+    '再撑一会儿……就一会儿。',
+    '……不行了，眼皮好重。',
+    '书……别跑……',
+    '嗯……我没睡，我在思考。',
   ],
   strolling: [
     '……腿都坐麻了。',
     '起来走两步。',
     '嗯，换个地方看书。',
     '……活动活动。',
+    '……换个角度，书也好看些。',
+    '嗯，该挪挪了。',
+    '这个姿势维持太久了。',
+    '……走两步，醒醒神。',
+    '换个地方，换个心情。',
   ],
   arrived: [
     '就这儿吧。',
     '……还是这边舒服。',
     '嗯，光线不错。',
+    '……这里背光，凑合。',
+    '好，就赖在这儿了。',
+    '嗯，这个位置视野好。',
+    '……总算到了。',
   ],
   waking: [
     '……唔，我睡着了？',
     '谁在叫我……哦，是你啊。',
     '我刚刚只是闭目养神，别乱想。',
     '……啊，书还摊着呢。',
+    '唔……几点了。',
+    '……我醒着呢，一直醒着。',
+    '别用那种眼神看我。',
+    '嗯……梦到很久以前的事了。',
   ],
   sleepy: [
     '……真的困了。',
     '看不进去了……先歇会儿。',
     '唔……',
+    '……字都在飘。',
+    '让我趴一会儿，就一会儿。',
+    '……别吵，我在和周公下棋。',
+    '嗯……这本书留着明天看。',
+  ],
+  dizzy: [
+    '……天旋地转的。',
+    '唔……别转了。',
+    '……我看到两个你了。',
+    '哼，等我缓过来再跟你算账。',
+    '……星星，好多星星。',
+    '别晃了……我认输。',
+    '唔……地怎么是斜的。',
   ],
 };
 
@@ -199,6 +251,16 @@ export class Behavior {
     // walk must not leave her stuck mid-stride.
     this.state.setBase('idle');
     this.mutter('arrived', 0.3);
+    this.posesSinceWalk = 0;
+    this.posesBeforeWalk = randomInt(POSES_BEFORE_WALK_MIN, POSES_BEFORE_WALK_MAX);
+    this.nextChangeAt = clock() + randomBetween(IDLE_AFTER_ARRIVAL_MIN, IDLE_AFTER_ARRIVAL_MAX);
+  }
+
+  /** She was just put down after being carried. */
+  landed() {
+    this.walking = false;
+    this.state.setBase('idle');
+    this.mutter('arrived', 0.4);
     this.posesSinceWalk = 0;
     this.posesBeforeWalk = randomInt(POSES_BEFORE_WALK_MIN, POSES_BEFORE_WALK_MAX);
     this.nextChangeAt = clock() + randomBetween(IDLE_AFTER_ARRIVAL_MIN, IDLE_AFTER_ARRIVAL_MAX);
@@ -341,7 +403,148 @@ function clock() {
   return performance.now();
 }
 
-export { MUTTERS, POSES };
+/**
+ * A short temper, driven by how the user has been treating her.
+ *
+ * Reacting to single events covers "click her and she greets you". This covers
+ * the *pattern* — being dragged about, asked five things in a row, or ignored
+ * for a while. Every rule has a cooldown, because an emotion the user cannot
+ * provoke twice is an emotion they never discover.
+ */
+const TEMPER = {
+  // The windows are generous on purpose. A desktop pet gets dragged around at a
+  // leisurely pace, and the first cut (three drags inside 25 seconds) was tight
+  // enough that it was effectively unreachable by hand even though the code was
+  // correct.
+  chatBurst: 3,
+  chatWindowMs: 90_000,
+  chatCooldownMs: 90_000,
+  dragBurst: 3,
+  dragWindowMs: 60_000,
+  dragCooldownMs: 45_000,
+  pokeBurst: 4,
+  pokeWindowMs: 30_000,
+  pokeCooldownMs: 45_000,
+  /** Left alone, but not yet asleep: the beat before she gives up. */
+  neglectedAfterMs: 5 * 60_000,
+  neglectedCooldownMs: 10 * 60_000,
+};
+
+/** How long each reaction stays on screen. Long enough to actually notice. */
+const TEMPER_REACTION_MS = 4500;
+
+/** Extra lines the temper uses, kept beside it so they travel together. */
+const TEMPER_MUTTERS = {
+  annoyed: [
+    '……你一次问这么多，我怎么答得过来。',
+    '停停停，一个一个来。',
+    '哼，真当奶奶我是随叫随到的？',
+    '你慢点说，我又不会跑。',
+    '……问题太多，我拒绝回答。',
+    '一次问一件事，这是规矩。',
+    '哼，催什么催。',
+  ],
+  dizzyComplaint: [
+    '别晃我！脑袋要晕了。',
+    '你再拎着我转，我可要生气了。',
+    '……放我下来。',
+    '喂！我可不是沙袋。',
+    '再晃一下试试。',
+    '……我年纪大了，经不起这么折腾。',
+    '唔……头晕。',
+  ],
+  smug: [
+    '行了行了，我知道我很好看。',
+    '哼，看够了没有。',
+    '……再摸一下我可要收钱了。',
+    '怎么，看入迷了？',
+    '嗯，允许你多看两眼。',
+    '哼，眼光不错。',
+    '……别以为夸我我就会高兴。',
+  ],
+  lonely: [
+    '……人呢。',
+    '一个人待着，也挺无聊的。',
+    '哼，反正你也不理我。',
+    '……你忙你的吧，我没事。',
+    '喂，我在这儿呢。',
+    '工作比我好看，是吗。',
+    '……算了，我自己看书。',
+  ],
+};
+
+// The temper's lines are ordinary mutter pools from `mutter()`'s point of view,
+// so fold them into the same table rather than special-casing the lookup.
+Object.assign(MUTTERS, TEMPER_MUTTERS);
+
+export class Temper {
+  /**
+   * @param {object} deps
+   * @param {(state:string, ms:number) => void} deps.react emotional overlay
+   * @param {(kind:string, chance:number) => void} deps.mutter
+   */
+  constructor({ react, mutter }) {
+    this.react = react;
+    this.mutter = mutter;
+    this.events = { chat: [], drag: [], poke: [] };
+    this.cooldowns = {};
+    this.lastInteractionAt = clock();
+  }
+
+  /**
+   * Register an interaction and, if the pattern warrants it, react.
+   *
+   * @param {'chat'|'drag'|'poke'} kind
+   * @returns {string|null} the emotional state it triggered, or null.
+   *   The caller needs to know: reacting *and* showing the ordinary
+   *   click/drag/thinking feedback meant the feedback overwrote the emotion in
+   *   the same frame, so the temper was never visible at all.
+   */
+  note(kind, now = clock()) {
+    this.lastInteractionAt = now;
+    const burst = TEMPER[`${kind}Burst`];
+    const window = TEMPER[`${kind}WindowMs`];
+    const cooldown = TEMPER[`${kind}CooldownMs`];
+    const list = this.events[kind];
+    if (!list || !burst) return null;
+
+    list.push(now);
+    while (list.length && now - list[0] > window) list.shift();
+    if (list.length < burst) return null;
+    if (now - (this.cooldowns[kind] || -1e9) < cooldown) return null;
+
+    this.cooldowns[kind] = now;
+    list.length = 0;
+
+    let emotion = null;
+    let pool = null;
+    if (kind === 'chat') {
+      emotion = 'furious';
+      pool = 'annoyed';
+    } else if (kind === 'drag') {
+      emotion = 'angry';
+      pool = 'dizzyComplaint';
+    } else {
+      emotion = 'proud';
+      pool = 'smug';
+    }
+    this.react(emotion, TEMPER_REACTION_MS);
+    this.mutter(pool, 1);
+    return emotion;
+  }
+
+  /** Called from the behaviour tick; fires at most once per cooldown. */
+  checkNeglect(now = clock()) {
+    if (now - this.lastInteractionAt < TEMPER.neglectedAfterMs) return false;
+    if (now - (this.cooldowns.neglect || -1e9) < TEMPER.neglectedCooldownMs) return false;
+    this.cooldowns.neglect = now;
+    this.react('hurt', TEMPER_REACTION_MS);
+    this.mutter('lonely', 1);
+    return true;
+  }
+}
+
+export { MUTTERS, POSES, TEMPER_MUTTERS };
 
 /** Exposed so the self-test can assert the pacing and the pose mix. */
 export const PACING = {

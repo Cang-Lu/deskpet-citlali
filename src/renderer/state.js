@@ -54,6 +54,48 @@ const STATES = {
   happy: { clip: 'jumping', effect: 'sparkle', speed: 1, loop: false, priority: PRIORITY.reaction },
   greet: { clip: 'waving', effect: 'sparkle', speed: 1, loop: false, priority: PRIORITY.reaction },
   shy: { clip: 'waving', effect: 'blush', speed: 1, loop: false, priority: PRIORITY.reaction },
+
+  /* --- emotional overlays ---
+   *
+   * This atlas has no angry, dizzy or blushing frames, so these poses keep an
+   * existing clip and add a derived expression on top (see emote.js). The
+   * `transform` is a whole-sprite pose tweak — a lean for anger, a wobble for
+   * dizziness — which is enough to change the read of a pose without new art.
+   */
+  angry: {
+    clip: 'seatedQuiet', effect: 'anger', speed: 1.1, loop: true,
+    priority: PRIORITY.reaction, emote: 'angry',
+    transform: { rotate: -0.05, shake: 0.012 },
+  },
+  furious: {
+    clip: 'seatedShake', effect: 'anger', speed: 1.3, loop: true,
+    priority: PRIORITY.reaction, emote: 'angry',
+    transform: { rotate: 0.04, shake: 0.026 },
+  },
+  hurt: {
+    clip: 'seatedQuiet', effect: 'rain', speed: 0.8, loop: true,
+    priority: PRIORITY.reaction, emote: 'hurt',
+    transform: { tiltY: 0.04 },
+  },
+  proud: {
+    clip: 'seatedShake', effect: 'sparkle', speed: 0.9, loop: true,
+    priority: PRIORITY.reaction, emote: 'proud',
+    transform: { rotate: -0.03, lift: 0.02 },
+  },
+  delighted: {
+    clip: 'jumping', effect: 'sparkle', speed: 1, loop: true,
+    priority: PRIORITY.reaction, emote: 'delighted',
+  },
+  awkward: {
+    clip: 'seatedNod', effect: 'none', speed: 0.9, loop: true,
+    priority: PRIORITY.reaction, emote: 'awkward',
+    transform: { rotate: 0.06 },
+  },
+  /** Being spun by the cursor: a wobble that steadies, plus the orbiting stars. */
+  dizzy: {
+    clip: 'seatedQuiet', effect: 'sleep', speed: 0.7, loop: true,
+    priority: PRIORITY.reaction, emote: 'dizzy',
+  },
   /**
    * Sad/angry ride a *looping* clip, so they must be sustained states with an
    * explicit duration rather than "play once and finish". Declaring them
@@ -88,11 +130,37 @@ export class PetState {
     this.overlay = null;
     this.overlayExpiresAt = 0;
     this.now = 0;
+    /** When the current state began, so expressions can animate from zero. */
+    this.startedAt = 0;
     this.apply();
   }
 
   get current() {
     return this.overlay || this.base;
+  }
+
+  /** Definition of whatever is on screen right now. */
+  get def() {
+    return STATES[this.current] || STATES.idle;
+  }
+
+  /**
+   * The derived expression to draw over the sprite, if any.
+   *
+   * Ambient poses have none, so this is null most of the time.
+   */
+  get emote() {
+    return this.def.emote || null;
+  }
+
+  /** Whole-sprite pose tweak for the current state. */
+  get transform() {
+    return this.def.transform || null;
+  }
+
+  /** The ambient effect kind, so the render loop can tell when a frame is static. */
+  get effectKind() {
+    return this.def.effect || 'none';
   }
 
   /** Switch the resting activity. Ignored while an overlay is showing. */
@@ -162,6 +230,12 @@ export class PetState {
     this.animator.speed = def.speed;
     this.animator.play(def.clip, { restart });
     this.effects.set(def.effect);
+    if (restart) this.startedAt = this.now;
+  }
+
+  /** Seconds since the current state began; drives the expression animation. */
+  get stateAge() {
+    return Math.max(0, (this.now - this.startedAt) / 1000);
   }
 
   /** What clip/effect a named state resolves to, for tooling and tests. */
@@ -174,6 +248,8 @@ export class PetState {
       row: clip ? clip.row : -1,
       motion: ROW_MOTION[def.clip] ?? 0,
       maxHoldMs: def.maxHoldMs || 0,
+      emote: def.emote || null,
+      transform: def.transform || null,
     };
   }
 
@@ -190,6 +266,7 @@ export class PetState {
         this.overlay = null;
         this.overlayExpiresAt = 0;
         this.apply(true);
+        this.startedAt = now;
       }
     }
   }

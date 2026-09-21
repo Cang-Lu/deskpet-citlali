@@ -5,15 +5,17 @@ import {
   MIN_SPRITE_HEIGHT,
   directionFromVector,
   fitSpriteSize,
-  supersampleFactor,
+  snapToCellMultiple,
 } from '../shared/pet-spec.js';
 import { Atlas, Animator, SpriteRenderer } from './sprite.js';
 import { Effects } from './effects.js';
 import {
   PetState, findAgitatedAmbientStates, maxHoldFor, validateStates,
 } from './state.js';
-import { Behavior, MUTTERS, POSES, PACING } from './behavior.js';
+import { Behavior, MUTTERS, POSES, PACING, Temper, TEMPER_MUTTERS } from './behavior.js';
 import { Ui } from './ui.js';
+import { drawEmote } from './emote.js';
+import { Gestures, DIZZY_MS } from './gesture.js';
 
 const api = window.deskpet;
 
@@ -79,6 +81,10 @@ let effects = null;
 let state = null;
 let behavior = null;
 let ui = null;
+/** Press/drag feedback and the spin easter egg. */
+let gestures = null;
+/** Her short temper, driven by interaction patterns. */
+let temper = null;
 
 const canvas = document.getElementById('pet');
 const ctx = canvas.getContext('2d');
@@ -146,6 +152,20 @@ async function boot() {
     maxHoldFor,
   });
 
+  gestures = new Gestures({
+    setOverlay: (name, opts) => {
+      // She has something to say about being spun around.
+      if (name === 'dizzy') behavior.mutter('dizzy', 1);
+      return state.setOverlay(name, opts);
+    },
+    onLand: () => behavior.notifyActivity(),
+  });
+
+  temper = new Temper({
+    react: (name, ms) => state.setOverlay(name, { duration: ms, force: true }),
+    mutter: (kind, chance) => behavior.mutter(kind, chance),
+  });
+
   // A state pointing at a missing clip kills the very first frame, so fail
   // loudly here rather than letting the window stay blank.
   const stateProblems = validateStates();
@@ -189,22 +209,35 @@ function resize() {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  const target = Number(settings.sizePx) || DEFAULT_SPRITE_HEIGHT;
+  // Pixel art can only be enlarged without resampling at whole multiples of the
+  // cell; anything in between has to weight the source rows unevenly, which
+  // shows up as faint horizontal banding. `integerScale` keeps her on those
+  // sizes; turning it off hands back every size at the cost of that banding.
+  const requested = Number(settings.sizePx) || DEFAULT_SPRITE_HEIGHT;
+  const target = settings.integerScale === false ? requested : snapToCellMultiple(requested);
   const { width, height } = fitSpriteSize({
     targetHeight: target,
     maxWidth: viewport.width - 4,
     maxHeight: viewport.height - 4,
   });
 
+  /**
+   * Snap the sprite box to whole device pixels.
+   *
+   * On a display with a fractional scale factor, centring a 192px sprite in a
+   * 420px window lands its origin on a half device pixel (18 CSS px at 1.25x is
+   * 22.5 device px). Chromium then filters every edge across two pixels, which
+   * is precisely what "slightly blurry" looks like — and it is invisible at
+   * 100%, which is why it only shows up on some machines.
+   */
+  const snap = (value) => Math.round(value * dpr) / dpr;
+
   // Any size is allowed; `SpriteRenderer` decides how to rasterise it.
   petBox = {
-    x: (viewport.width - width) / 2,
-    y: viewport.height - height,
+    x: snap((viewport.width - width) / 2),
+    y: snap(viewport.height - height),
     width,
     height,
-    supersample: settings.renderMode === 'nearest'
-      ? null
-      : supersampleFactor({ targetHeight: height, dpr }),
   };
 
   const root = document.documentElement.style;
@@ -212,6 +245,12 @@ function resize() {
   root.setProperty('--pet-h', `${petBox.height}px`);
   // Work mode gives her a taller bubble; the main process owns the number.
   root.setProperty('--bubble-zone', `${Number(settings.bubbleZone) || BUBBLE_ZONE}px`);
+
+  // Assigning to canvas.width/height clears the canvas, and the still-frame
+  // skip below would then decide nothing had changed and refuse to repaint --
+  // leaving her invisible until the animation happened to advance, which on the
+  // slow idle clip is a couple of seconds. Force the next frame to draw.
+  lastStillSignature = '';
 }
 
 /**
@@ -233,6 +272,55 @@ function paintCell(context, cell, alpha = 1) {
   spriteRenderer.drawCell(context, cell, petBox, viewport.dpr, alpha);
 }
 
+/**
+ * Run `draw` inside a pose offset, pivoting on her feet.
+ *
+ * Pivoting at the bottom rather than the centre is what makes a squash read as
+ * her being pressed onto the desktop instead of shrinking in mid air.
+ *
+ * @param {CanvasRenderingContext2D} context
+ * @param {{sx:number,sy:number,rotate:number,ox:number,oy:number}|null} pose
+ * @param {() => void} draw
+ */
+function withPose(context, pose, draw) {
+  if (!pose) {
+    draw();
+    return;
+  }
+  const pivotX = petBox.x + petBox.width / 2;
+  const pivotY = petBox.y + petBox.height;
+  context.save();
+  context.translate(pivotX + (pose.ox || 0), pivotY + (pose.oy || 0));
+  if (pose.rotate) context.rotate(pose.rotate);
+  context.scale(pose.sx || 1, pose.sy || 1);
+  context.translate(-pivotX, -pivotY);
+  draw();
+  context.restore();
+}
+
+/** Merge the state's own pose tweak with the transient gesture offset. */
+function composePose(gesturePose, transform, now) {
+  if (!transform && !gesturePose) return null;
+  const t = state.stateAge;
+  const shake = transform && transform.shake
+    ? Math.sin(now / 28) * transform.shake
+    : 0;
+  const wobble = transform && transform.wobble
+    ? Math.sin(now / 165) * transform.wobble
+    : 0;
+  return {
+    sx: (gesturePose ? gesturePose.sx : 1) * (transform && transform.scaleX ? transform.scaleX : 1),
+    sy: (gesturePose ? gesturePose.sy : 1) * (transform && transform.scaleY ? transform.scaleY : 1),
+    rotate: (gesturePose ? gesturePose.rotate : 0)
+      + (transform && transform.rotate ? transform.rotate : 0)
+      + shake + wobble,
+    ox: (gesturePose ? gesturePose.ox : 0) + (transform && transform.tiltX ? transform.tiltX * petBox.width : 0),
+    oy: (gesturePose ? gesturePose.oy : 0) - (transform && transform.lift ? transform.lift * petBox.height : 0),
+    // A dizzy lean should breathe rather than sit at one angle.
+    tilt: t,
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Render loop                                                         */
 /* ------------------------------------------------------------------ */
@@ -242,25 +330,63 @@ function frame(now) {
   lastFrame = now;
 
   behavior.tick(now);
+  if (temper) temper.checkNeglect(now);
   state.update(dt, now);
   animator.update(dt);
   updateGaze(now);
 
+  // The cursor may have circled her since the last frame.
+  if (windowInfo) {
+    gestures.trackSpin(cursorScreen, {
+      x: windowInfo.x + petBox.x + petBox.width / 2,
+      y: windowInfo.y + petBox.y + petBox.height * 0.45,
+    }, now);
+  }
+  const gesturePose = gestures.update(dt, now);
+  const pose = composePose(gesturePose, state.transform, now);
+
   effects.update(dt, petBox);
+
+  const contentRow = animator.cell.row;
+  const anchor = atlas.anchorFor(contentRow);
+  const emote = state.emote;
+
+  /**
+   * Skip the repaint when the frame cannot have changed.
+   *
+   * She is still for most of her life — asleep, or a slow idle clip — and
+   * redrawing an identical canvas 60 times a second is pure battery drain. The
+   * frame only advances when the cell changes, a fade is running, an expression
+   * is animating, or particles exist to move.
+   */
+  const still = !animator.fade
+    && state.effectKind === 'none'
+    && !emote
+    && !pose;
+  const signature = still ? `${contentRow}:${animator.cell.col}` : '';
+  if (still && signature === lastStillSignature) {
+    requestAnimationFrame(frame);
+    return;
+  }
+  lastStillSignature = still ? signature : '';
 
   ctx.clearRect(0, 0, viewport.width, viewport.height);
 
-  // Cross-fade the outgoing cell: the atlas mixes two body postures
-  // (lying down reading vs. sitting upright), so clips must not hard-cut.
-  const alpha = animator.fadeAlpha;
-  if (alpha > 0 && animator.fade) {
-    paintCell(ctx, { row: animator.fade.row, col: animator.fade.col }, alpha);
-  }
+  withPose(ctx, pose, () => {
+    // Cross-fade the outgoing cell: the atlas mixes two body postures
+    // (lying down reading vs. sitting upright), so clips must not hard-cut.
+    const alpha = animator.fadeAlpha;
+    if (alpha > 0 && animator.fade) {
+      paintCell(ctx, { row: animator.fade.row, col: animator.fade.col }, alpha);
+    }
 
-  paintCell(ctx, animator.cell);
+    paintCell(ctx, animator.cell);
 
-  // Effects come last: the mood aura is clipped to the sprite silhouette via
-  // `source-atop`, so it has to be composited on top of her.
+    // Expressions ride on top of the pose so they follow a wobble or a squash,
+    // and are drawn before the particle effects so sparkles sit above them.
+    if (emote) drawEmote(ctx, emote, petBox, anchor, state.stateAge);
+  });
+
   effects.draw(ctx, petBox);
 
   requestAnimationFrame(frame);
@@ -362,6 +488,11 @@ function setCapture(next) {
   api.setClickThrough(!next);
 }
 
+/** Cell signature of the last frame actually painted, for the still-frame skip. */
+let lastStillSignature = '';
+/** A chat-burst reaction, held back until her reply lands. */
+let pendingTemper = null;
+
 function installPointer() {
   window.addEventListener('mousemove', (event) => {
     mouseScreen = { x: event.screenX, y: event.screenY };
@@ -372,6 +503,9 @@ function installPointer() {
       const dy = event.screenY - dragging.startScreenY;
       dragging.moved = Math.max(dragging.moved, Math.hypot(dx, dy));
       api.setWindowPosition(dragging.startWindowX + dx, dragging.startWindowY + dy);
+      // She keeps whatever pose she was holding while being carried; see
+      // `Gestures.setDragging` for why the facing was removed.
+      if (dragging.moved > DRAG_THRESHOLD_PX) gestures.setDragging();
     }
   }, { passive: true });
 
@@ -381,6 +515,7 @@ function installPointer() {
     if (!windowInfo) windowInfo = await api.getWindowInfo();
     behavior.notifyActivity();
     api.reportActivity();
+    gestures.press();
     dragging = {
       startScreenX: event.screenX,
       startScreenY: event.screenY,
@@ -398,12 +533,25 @@ function installPointer() {
     if (event.button !== 0 || !dragging) return;
     const elapsed = performance.now() - dragging.startedAt;
     const wasClick = dragging.moved < DRAG_THRESHOLD_PX && elapsed < CLICK_MAX_MS;
+    const wasDragging = dragging.moved >= DRAG_THRESHOLD_PX;
     dragging = null;
+    gestures.release();
+    if (wasDragging) {
+      gestures.land();
+      // Put her down: settle into a pose somewhere new rather than staying
+      // frozen in whatever she was doing.
+      behavior.landed();
+    }
 
     if (wasClick) {
-      handlePetClick();
+      // If the poking has wound her up, that reaction *is* the feedback;
+      // greeting her on top of it would overwrite it in the same frame.
+      if (!temper.note('poke')) handlePetClick();
+      else behavior.notifyActivity();
     } else {
-      state.setOverlay('surprised', { duration: 1400, force: true });
+      if (!temper.note('drag')) {
+        state.setOverlay('surprised', { duration: 1400, force: true });
+      }
     }
     setCapture(shouldCapture(event.clientX, event.clientY));
   });
@@ -534,10 +682,15 @@ function handleSend(text) {
   }
   behavior.notifyActivity();
   api.reportActivity();
+  // A burst of questions annoys her, but the answer has to come first — and
+  // "thinking" outranks a reaction, so firing it here would never be seen.
+  pendingTemper = temper.note('chat');
   state.setOverlay('thinking', { force: true });
   ui.setBusy(true);
   ui.setBubbleMood('thinking');
-  ui.showBubble('', { mood: 'thinking', status: '正在想…' });
+  // Kind is `reply`, not the default `ambient`: while this is streaming it must
+  // be protected from her muttering, and it must not be auto-hidden mid-answer.
+  ui.showBubble('', { mood: 'thinking', status: '正在想…', kind: 'reply' });
   api.sendMessage(text).catch((err) => {
     ui.showToast(`发送失败：${err.message}`, 8000);
     ui.setBusy(false);
@@ -598,6 +751,17 @@ function installIpc() {
     // Long answers stay up long enough to read, and she stays put meanwhile.
     holdAttentionFor(finalText);
     ui.scheduleHide();
+
+    // The annoyed reaction was held back until the answer landed. Shown now,
+    // right after her reply, where it reads as a reaction to being interrogated.
+    if (pendingTemper) {
+      const emotion = pendingTemper;
+      pendingTemper = null;
+      setTimeout(() => {
+        if (ui.showingReply) return;
+        state.setOverlay(emotion, { duration: 4500, force: true });
+      }, 900);
+    }
   });
 
   api.onSettingsChanged((next) => {
@@ -748,6 +912,8 @@ function exposeDebugSurface() {
         mood: ui.bubble.dataset.mood,
         bubbleVisible: ui.bubbleVisible,
         bubblePinned: ui.pinned,
+        bubbleKind: ui.kind,
+        streaming: ui.busy,
         composerOpen: ui.composerOpen,
         petBox,
         dpr: viewport.dpr,
@@ -890,8 +1056,178 @@ function exposeDebugSurface() {
     get attentive() { return behavior.attentive; },
     /** How long a reply of this length would stay up. */
     replyHideDelay: (text) => Ui.replyHideDelay(text),
+    /** Show an emotional overlay indefinitely, for screenshots. */
+    emote: (name, duration = 600000) => state.setOverlay(name, { duration, force: true }),
+    /** Measured head anchors, so the self-test can sanity-check them. */
+    get anchors() { return atlas.anchors; },
+    /** Which anchor the current clip resolves to. */
+    get currentAnchor() { return atlas.anchorFor(animator.cell.row); },
+    /**
+     * Draw an expression to an offscreen canvas and report its bounding box.
+     *
+     * Derived expressions are positioned from the face anchor, so the only way
+     * to know they landed on her face rather than in her hair is to measure.
+     */
+    measureEmote(name, row = animator.cell.row, t = 0.5) {
+      const w = Math.max(1, Math.round(viewport.width));
+      const h = Math.max(1, Math.round(viewport.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const cx = canvas.getContext('2d', { willReadFrequently: true });
+      const anchor = atlas.anchorFor(row);
+      drawEmote(cx, name, petBox, anchor, t);
+      const data = cx.getImageData(0, 0, w, h).data;
+      let minX = w;
+      let minY = h;
+      let maxX = -1;
+      let maxY = -1;
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          if (data[(y * w + x) * 4 + 3] <= 10) continue;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+      const toNorm = (px) => Number((px - petBox.x) / petBox.width);
+      const toNormY = (px) => Number((px - petBox.y) / petBox.height);
+      return {
+        row,
+        anchor,
+        facePx: { x: petBox.x + anchor.x * petBox.width, y: petBox.y + anchor.y * petBox.height },
+        bbox: maxX < 0 ? null : {
+          x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1,
+          centreNorm: [toNorm((minX + maxX) / 2), toNormY((minY + maxY) / 2)],
+        },
+      };
+    },
+    /** Press/drag/spin state, for the self-test. */
+    get gestures() {
+      return {
+        spinning: gestures.isSpinning,
+        reeling: gestures.reeling,
+        squash: gestures.squash,
+        minSquash: gestures.minSquash,
+        maxSquash: gestures.maxSquash,
+        dragging: gestures.dragging,
+        spinAccum: gestures.spinAccum,
+        wobbleDeg: Number(gestures.wobbleDeg.toFixed(2)),
+        maxWobbleDeg: Number(gestures.maxWobbleDeg.toFixed(2)),
+      };
+    },
+    resetSquashRange: () => gestures.resetRange(),
+    /** Drive the physics directly, since synthetic mouse events are unreliable. */
+    press: () => gestures.press(),
+    release: () => gestures.release(),
+    land: () => gestures.land(),
+    drag: (dx) => {
+      gestures.setDragging();
+      void dx;   // direction is deliberately ignored; see Gestures.setDragging
+      return { dragging: gestures.dragging, base: state.base };
+    },
+    /** Her centre in screen coordinates, which is what `orbit` needs. */
+    get centre() {
+      return {
+        x: (windowInfo ? windowInfo.x : 0) + petBox.x + petBox.width / 2,
+        y: (windowInfo ? windowInfo.y : 0) + petBox.y + petBox.height * 0.45,
+      };
+    },
+    /** Feed a cursor position in screen coordinates to the spin detector. */
+    orbit: (x, y) => gestures.trackSpin({ x, y }, window.__deskpet.centre, performance.now()),
+    dizzyMs: DIZZY_MS,
     /** How many lines exist in each ambient pool. */
     mutterKinds: () => Object.fromEntries(Object.entries(MUTTERS).map(([k, v]) => [k, v.length])),
+    /** The area that accepts a click, for synthetic pointer tests. */
+    get hitRect() { return petHitRect(); },
+    /** Simulate a full press-drag-release on her, through the real handlers. */
+    pointerDrag: (dx = 40, dy = 0) => {
+      const r = petHitRect();
+      const cx = Math.round((r.left + r.right) / 2);
+      const cy = Math.round((r.top + r.bottom) / 2);
+      const fire = (type, screenX, screenY) => window.dispatchEvent(new MouseEvent(type, {
+        bubbles: true, button: 0, clientX: cx, clientY: cy, screenX, screenY,
+      }));
+      fire('mousedown', 1000, 500);
+      fire('mousemove', 1000 + dx, 500 + dy);
+      fire('mouseup', 1000 + dx, 500 + dy);
+      return { cx, cy, moved: Math.hypot(dx, dy) };
+    },
+    /** Simulate a click on her, through the real handlers. */
+    pointerClick: () => {
+      const r = petHitRect();
+      const cx = Math.round((r.left + r.right) / 2);
+      const cy = Math.round((r.top + r.bottom) / 2);
+      const fire = (type) => window.dispatchEvent(new MouseEvent(type, {
+        bubbles: true, button: 0, clientX: cx, clientY: cy, screenX: 1000, screenY: 500,
+      }));
+      fire('mousedown');
+      fire('mouseup');
+      return { cx, cy };
+    },
+    temperPools: () => Object.keys(TEMPER_MUTTERS),
+    /** Drive the temper directly, when the real triggers are too slow to hit. */
+    temper: (kind) => temper.note(kind),
+    /** Live temper bookkeeping, so a misfiring trigger can be diagnosed. */
+    get temperState() {
+      return {
+        events: Object.fromEntries(Object.entries(temper.events).map(([k, v]) => [k, v.length])),
+        cooldowns: { ...temper.cooldowns },
+        windowsMs: { drag: 60000, poke: 30000, chat: 90000 },
+        bursts: { drag: 3, poke: 4, chat: 3 },
+      };
+    },
+    /** Force the streaming flag, to test that ambient lines still expire. */
+    forceBusy: (value) => ui.setBusy(Boolean(value)),
+    /**
+     * Mean absolute second difference down the sprite's columns.
+     *
+     * A resampled image with uneven row weighting shows a strong periodic
+     * component along y; a cleanly scaled one does not. Returned with the
+     * threshold it should stay under, so the self-test can assert on it.
+     */
+    rowBanding: () => {
+      const w = Math.max(1, Math.round(viewport.width));
+      const h = Math.max(1, Math.round(viewport.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const cx = canvas.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(ctx.canvas, 0, 0);
+      const data = cx.getImageData(0, 0, w, h).data;
+
+      const x0 = Math.max(0, Math.floor(petBox.x));
+      const x1 = Math.min(w - 1, Math.ceil(petBox.x + petBox.width));
+      const y0 = Math.max(1, Math.floor(petBox.y));
+      const y1 = Math.min(h - 2, Math.ceil(petBox.y + petBox.height));
+
+      const rows = [];
+      for (let y = y0; y <= y1; y += 1) {
+        let sum = 0;
+        let n = 0;
+        for (let x = x0; x <= x1; x += 1) {
+          const i = (y * w + x) * 4;
+          sum += data[i] + data[i + 1] + data[i + 2];
+          n += 1;
+        }
+        rows.push(n ? sum / n : 0);
+      }
+
+      let acc = 0;
+      let peak = 0;
+      for (let i = 1; i < rows.length - 1; i += 1) {
+        const d = Math.abs(rows[i - 1] - 2 * rows[i] + rows[i + 1]);
+        acc += d;
+        if (d > peak) peak = d;
+      }
+      return {
+        energy: Number((acc / Math.max(1, rows.length - 2)).toFixed(3)),
+        peak: Number(peak.toFixed(2)),
+        // Calibrated from a build that was verified to be free of banding.
+        limit: 12,
+      };
+    },
     /** Activity pacing, so tests can assert she does not go idle for minutes. */
     get pacing() { return PACING; },
     /** The pose table with its line pools, for the pose/line consistency check. */
@@ -923,6 +1259,20 @@ function exposeDebugSurface() {
     ),
     /** Kick off a behaviour-driven walk, for testing. */
     startWalk: () => behavior.startWalk(),
+    /** Kick off a stroll and report what actually happened, for the self-test. */
+    walkProbe: async () => {
+      const before = state.base;
+      await behavior.startWalk();
+      return {
+        before,
+        after: state.base,
+        walking: behavior.walking,
+        overlay: state.overlay,
+        free: state.isFree,
+        bounds: windowInfo ? { x: windowInfo.x, width: windowInfo.width } : null,
+        workArea: windowInfo ? windowInfo.workArea : null,
+      };
+    },
     hideBubble: () => ui.hideBubble(),
     showBalance: (payload) => showBalanceBubble(payload),
     /**
