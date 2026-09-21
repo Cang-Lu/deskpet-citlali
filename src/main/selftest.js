@@ -780,9 +780,12 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     //
     //     A key has to exist first: with no key, clicking her offers to open
     //     Settings instead of restoring a line, which is correct behaviour but
-    //     not the path under test here.
-    const secrets = require('./secrets');
-    config.update(secrets.writeApiKey('sk-selftest-reply-guard'));
+    //     not the path under test here. It is set through the renderer's own
+    //     settings API so the change is broadcast, exactly as the UI would.
+    await wc.executeJavaScript(
+      `window.deskpet.saveSettings({ apiKey: 'sk-selftest-reply-guard' })`,
+    );
+    await sleep(400);
     await wc.executeJavaScript(`
       __deskpet.pauseBehavior(false);
       window.__longReply = '这是一段很长的回答，用于验证它不会被随机台词覆盖。'.repeat(20);
@@ -805,7 +808,10 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
       kind: document.getElementById('bubble').dataset.kind,
     })`);
 
-    // Clicking her brings the answer back after it has been dismissed.
+    // Clicking her brings the answer back after it has been dismissed. The
+    // behaviour engine is paused for this: it is not what is under test, and a
+    // mutter landing between the two calls would make the check a coin flip.
+    await wc.executeJavaScript('__deskpet.pauseBehavior(true)');
     await wc.executeJavaScript('__deskpet.hideBubble()');
     await sleep(300);
     const attentiveAfterHide = await wc.executeJavaScript('__deskpet.attentive');
@@ -835,7 +841,8 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     write(`assert long replies survive: ${report.assertions.replyProtectionOk} ` +
       `${JSON.stringify(report.assertions.replyProtection)}`);
     await wc.executeJavaScript('__deskpet.hideBubble(); __deskpet.pauseBehavior(true)');
-    config.update(secrets.writeApiKey(''));
+    await wc.executeJavaScript(`window.deskpet.saveSettings({ apiKey: '' })`);
+    await sleep(300);
 
     // 5m. The conversation log must be reachable and show what was said.
     if (openHistory) {
@@ -868,6 +875,46 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
         write('ERROR: the history window never opened');
       }
     }
+
+    // 5n. Moving her must not change the window size.
+    //     On a display with a fractional scale factor (Windows at 125% or 150%)
+    //     `setPosition` only moves the origin, and the DIP -> device pixel ->
+    //     DIP round trip rounds up a little each time. Walking or dragging then
+    //     inflated the window one pixel per move, stretching the speech bubble
+    //     and the composer wider and wider without bound. At 100% scaling the
+    //     round trip is exact, so this only reproduces on some machines --
+    //     re-run with `--force-device-scale-factor=1.25` to exercise it.
+    const beforeMoves = pet.win.getBounds();
+    const startInner = await wc.executeJavaScript(
+      '({ w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio })',
+    );
+    for (let i = 0; i < 80; i += 1) {
+      await wc.executeJavaScript(
+        `window.deskpet.setWindowPosition(${beforeMoves.x + i + 1}, ${beforeMoves.y}); true`,
+      );
+      await sleep(12);
+    }
+    await sleep(500);
+    const afterMoves = pet.win.getBounds();
+    const endInner = await wc.executeJavaScript(
+      '({ w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio })',
+    );
+    report.assertions.moveStableSize = {
+      scaleFactor: startInner.dpr,
+      before: `${beforeMoves.width}x${beforeMoves.height}`,
+      after: `${afterMoves.width}x${afterMoves.height}`,
+      innerBefore: `${startInner.w}x${startInner.h}`,
+      innerAfter: `${endInner.w}x${endInner.h}`,
+      moves: 80,
+    };
+    // The renderer's own width is what the bubble and composer are laid out
+    // against, so that is the number that must hold perfectly still.
+    report.assertions.moveStableSizeOk = endInner.w === startInner.w
+      && endInner.h === startInner.h
+      && Math.abs(afterMoves.width - beforeMoves.width) <= 1
+      && Math.abs(afterMoves.height - beforeMoves.height) <= 1;
+    write(`assert repeated moves keep the size: ${report.assertions.moveStableSizeOk} ` +
+      `${JSON.stringify(report.assertions.moveStableSize)}`);
 
     // 5h. Prove the console capture itself works. Without this, a zero-error
     //     result is indistinguishable from a broken capture sink.

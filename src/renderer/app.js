@@ -513,7 +513,11 @@ function handlePetClick() {
 /** Bring the last thing she said back into view. */
 function restoreLastLine() {
   const text = lastReplyText || lastBubbleText;
-  if (!text || ui.bubbleVisible) return;
+  if (!text) return;
+  // Only a reply already on screen is newer than the one we remembered. An
+  // ambient line is not: she may have muttered something in the meantime, and
+  // clicking her should still bring the answer back rather than be swallowed.
+  if (ui.showingReply) return;
   if (lastReplyText) sayReply(lastReplyText);
   else sayLine(text);
   ui.scheduleHide();

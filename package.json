@@ -1,6 +1,6 @@
 {
   "name": "deskpet-citlali",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Standalone AI desktop pet — Citlali (Genshin Impact), Electron + DeepSeek.",
   "author": "Cang-Lu <1848925200@qq.com>",

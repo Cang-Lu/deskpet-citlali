@@ -182,15 +182,30 @@ class PetWindow {
     this.win.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
   }
 
+  /**
+   * Move the window, re-asserting its size on every call.
+   *
+   * `setPosition` changes only the origin, and on a display whose scale factor
+   * is fractional (Windows at 125% or 150%) each DIP -> device pixel -> DIP
+   * round trip can round the rectangle up. Moving her repeatedly — walking, or
+   * dragging — then inflates the window one pixel at a time, which stretches
+   * the speech bubble and the composer wider and wider.
+   *
+   * Passing an explicit width and height makes every call restore the intended
+   * size, so the error can never accumulate. At 100% scaling the round trip is
+   * exact and the bug does not appear at all, which is why it only showed up on
+   * some machines.
+   */
   setPosition(x, y) {
     if (!this.win || this.win.isDestroyed()) return;
-    this.win.setPosition(Math.round(x), Math.round(y));
+    const { width, height } = this.size;
+    this.win.setBounds({ x: Math.round(x), y: Math.round(y), width, height });
   }
 
   moveBy(dx, dy) {
     if (!this.win || this.win.isDestroyed()) return;
     const [x, y] = this.win.getPosition();
-    this.win.setPosition(Math.round(x + dx), Math.round(y + dy));
+    this.setPosition(x + dx, y + dy);
   }
 
   setAlwaysOnTop(flag) {
@@ -257,7 +272,9 @@ class PetWindow {
         finished = true;
       }
 
-      this.win.setPosition(Math.round(next), y);
+      // Routed through setPosition so the window size is re-asserted on every
+      // step; moving alone lets the size drift on fractional-scale displays.
+      this.setPosition(next, y);
       if (finished) finish('arrived');
     }, WALK_TICK_MS);
   }
