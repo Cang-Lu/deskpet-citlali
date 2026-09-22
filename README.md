@@ -248,11 +248,17 @@ Also:
 
 The self-test asserts this mapping and forbids using the two gaze rows as random poses.
 
-These are a **local line library** (9 pools, 41 lines) and cost no API call — they are high-frequency ambient noise, and burning tokens on "…sleepy" would be silly. The **主动找你说话 / unprompted chatter** setting is a different thing entirely: that one really does call DeepSeek, far less often (25 minutes by default).
+These are a **local line library** (14 pools, 119 lines) and cost no API call — they are ambient noise, and burning tokens on "…sleepy" would be silly. A global quiet gap of 55–150 seconds sits between them, so she does not narrate every pose change.
 
-Emotions are driven by the model: the system prompt requires a `[[mood:xxx]]` token at the **start** of every reply. The main process strips it out while streaming — so it never appears in the bubble — and maps it onto the states above.
+The **主动开口说话 / speak up on its own** setting covers *everything* she says unprompted, the local lines included. Turning it off leaves her animating silently. That is deliberate: muttering is what users actually notice, so a switch that only silenced the model-generated half looked broken.
 
-To tune how lively she is, edit the `POSES` table (weights, durations) and `WALK_SPEED` at the top of `src/renderer/behavior.js`.
+Unprompted lines are additionally blocked while a reply is on screen, and for a while after any real conversation — they can never talk over an answer you are reading.
+
+**She knows Teyvat.** The persona is built from her canon characterisation rather than a generic "novel-loving girl": she is the Great Shaman of the Masters of the Night-Wind in Natlan, and the terrifying old-witch act is exactly that — an act. The real her is reserved, easily flustered and anxious about what people think of her.
+
+She is also **two hundred years old and widely read**, so the prompt carries a roster of roughly seventy notable people from all seven nations, plus the rules for using it: recognise a name from anywhere, keep *having heard of someone* and *having met them* clearly apart, and never claim she only knows her own neighbours. She has real history with people outside Natlan — the Harbinger **Sandrone** chartered the ship she worked on as an aquarium receptionist in Fontaine and later came to her house for tea — and she talks about divination, star-omens, the Night Kingdom, phlogiston, her tribe and old memories as readily as about novels. The roster lives in `TEYVAT_ROSTER` in `src/main/ai.js`; its sources and every uncertain detail are collected in [`docs/teyvat-directory.md`](docs/teyvat-directory.md).
+
+To tune how lively she is, edit the `POSES` table (weights, durations) and `WALK_SPEED` at the top of `src/renderer/behavior.js`; the line pools are in `MUTTERS` just above them.
 
 ---
 
@@ -290,6 +296,7 @@ tools/
   inspect-shot.js      Debug helper: crop/zoom a screenshot and print pixel samples
 docs/
   animations.png       All 11 rows with their frames, uses and measured motion
+  teyvat-directory.md  Who Citlali knows and how she knows them: sources for TEYVAT_ROSTER
 ```
 
 ## Development

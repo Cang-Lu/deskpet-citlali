@@ -892,6 +892,34 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
       `pet(${petGen.maxTokens}tok/${petGen.temperature}) vs work(${workGen.maxTokens}tok/${workGen.temperature}), ` +
       `brevity rule lifted=${!report.assertions.workPrompts.workHasBrevityRule}`);
 
+    // 5k-2. The Teyvat roster: a stable prefix of every request, so every
+    //       prompt flavour has to carry it -- and it must not still contain the
+    //       wrong names/details that an earlier draft of the persona shipped
+    //       (Freminet spelled "弗蕾米内", Enjou as "恩乔", Allier as "阿利耶",
+    //       and Sandrone's job as a hotel front desk instead of a ship's).
+    const roster = ai.TEYVAT_ROSTER;
+    const staleNames = ['弗蕾米内', '恩乔', '阿利耶'];
+    report.assertions.personaRoster = {
+      chars: roster.length,
+      inPet: petPrompt.includes('桑多涅') && petPrompt.includes('维奇琳'),
+      inWork: workPrompt.includes('卡皮塔诺'),
+      inChatter: chatterPrompt.includes('欧洛伦') && chatterPrompt.includes('派蒙'),
+      rulesPresent: roster.includes('绝不说') && roster.includes('星图上没有他'),
+      shipNotHotel: roster.includes('维恩歌莱号') && roster.includes('不是酒店前台'),
+      noStaleNames: staleNames.filter((n) => roster.includes(n)),
+      totalPromptChars: petPrompt.length,
+    };
+    report.assertions.personaRosterOk = report.assertions.personaRoster.chars > 3000
+      && report.assertions.personaRoster.inPet
+      && report.assertions.personaRoster.inWork
+      && report.assertions.personaRoster.inChatter
+      && report.assertions.personaRoster.rulesPresent
+      && report.assertions.personaRoster.shipNotHotel
+      && report.assertions.personaRoster.noStaleNames.length === 0;
+    write(`assert persona roster: ${report.assertions.personaRosterOk} ` +
+      `roster=${report.assertions.personaRoster.chars}ch, prompt=${petPrompt.length}ch, ` +
+      `stale=${JSON.stringify(report.assertions.personaRoster.noStaleNames)}`);
+
     const sendAndWait = async (text) => {
       await wc.executeJavaScript(`
         window.__modeReply = null;
@@ -1084,7 +1112,9 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     //     both work.
     const emoteProbe = await wc.executeJavaScript(`
       (() => {
-        const names = ['angry', 'hurt', 'proud', 'delighted', 'awkward', 'dizzy'];
+        // hurt is deliberately absent: its pose already reads as tearful and the
+        // facial overlay was removed as inaccurate.
+        const names = ['angry', 'proud', 'delighted', 'awkward', 'dizzy'];
         const out = {};
         for (const row of [0, 5, 8]) {
           out[row] = {};
@@ -1100,6 +1130,9 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     `);
 
     const emoteMismatches = [];
+    const emoteMismatchesPush = (bbox, list) => {
+      if (bbox) list.push(`hurt: expected no facial overlay, got ${bbox.w}x${bbox.h}px`);
+    };
     for (const [label, probe] of [['profile', emoteProbe[0]], ['front', emoteProbe[5]]]) {
       for (const [name, m] of Object.entries(probe)) {
         if (!m) { emoteMismatches.push(`${label}/${name}: nothing drawn`); continue; }
@@ -1120,7 +1153,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
         const out = {};
         for (const [label, row] of [['profile', 0], ['front', 5]]) {
           out[label] = {};
-          for (const n of ['blush', 'teary', 'prideStar', 'angerMark']) {
+          for (const n of ['blush', 'prideStar', 'angerMark']) {
             const m = window.__deskpet.measureEmote(n, row, 0.5);
             out[label][n] = m.bbox
               ? { centre: m.bbox.centreNorm.map((v) => Number(v.toFixed(3))), w: m.bbox.w, h: m.bbox.h }
@@ -1133,7 +1166,7 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     const faceWant = { profile: [0.41, 0.285], front: [0.49, 0.32] };
     for (const [label, probe] of Object.entries(marks)) {
       const [wx, wy] = faceWant[label];
-      for (const name of ['blush', 'teary']) {
+      for (const name of ['blush']) {
         const m = probe[name];
         if (!m) { emoteMismatches.push(`${label}/${name}: nothing drawn`); continue; }
         if (Math.abs(m.centre[0] - wx) > 0.16 || Math.abs(m.centre[1] - wy) > 0.16) {
@@ -1150,6 +1183,13 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
         }
       }
     }
+
+    // hurt must draw nothing on her face: the pose already reads as tearful,
+    // and the watery eyes that used to be drawn on top landed on her eyelids.
+    const hurtOverlay = await wc.executeJavaScript(
+      "__deskpet.measureEmote('hurt', 5, 0.5).bbox",
+    );
+    emoteMismatchesPush(hurtOverlay, emoteMismatches);
 
     report.assertions.emotes = { composite: emoteProbe, marks, mismatches: emoteMismatches };
     report.assertions.emotesOk = emoteMismatches.length === 0;
