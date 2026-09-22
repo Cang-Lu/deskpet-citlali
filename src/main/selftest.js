@@ -1353,6 +1353,60 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
       `${JSON.stringify(report.assertions.temper)}`);
     await wc.executeJavaScript('__deskpet.clearOverlay()');
 
+    // Her temper, part two: a burst of questions. This is the only route to
+    // 暴怒, and it is the route the self-test never covered -- which is how it
+    // shipped broken. `handleSend` notes the burst, but the reaction is held
+    // back until the answer lands, and the consumer then refused to show it
+    // while a reply was on screen. A reply is always on screen 900ms after it
+    // lands, so the emotion was unreachable by any amount of typing.
+    await wc.executeJavaScript('__deskpet.clearOverlay()');
+    await sleep(300);
+    for (let i = 0; i < 3; i += 1) {
+      // Drive the composer, not the preload API. `handleSend` -- where the burst
+      // is counted -- only runs on this path, which is exactly why calling
+      // `window.deskpet.sendMessage` here would have proved nothing.
+      //
+      // No API key is set at this point, so each send fails; that is fine. What
+      // is under test is the bookkeeping, not the model.
+      await wc.executeJavaScript(`
+        (() => {
+          const form = document.getElementById('composer');
+          document.getElementById('input').value = ${JSON.stringify(`测试消息 ${i}`)};
+          form.requestSubmit();
+          return true;
+        })()
+      `);
+      await sleep(700);
+    }
+    const chatBurst = await wc.executeJavaScript('__deskpet.temperState');
+    // Land a reply the way the main process does, and watch what she does with
+    // the reaction she has been holding.
+    pet.win.webContents.send('chat:start', { chatter: false });
+    pet.win.webContents.send('chat:done', {
+      ok: true, text: '哼，一次问这么多，我怎么答得过来。', mood: 'neutral', chatter: false,
+    });
+    await sleep(1700);
+    const chatAfter = await wc.executeJavaScript('window.__deskpet.info');
+    const chatAttentive = await wc.executeJavaScript('__deskpet.attentive');
+    report.assertions.chatTemper = {
+      burstTriggered: (chatBurst.cooldowns.chat || 0) > 0,
+      overlay: chatAfter.overlay,
+      replyStillOnScreen: chatAfter.bubbleVisible && chatAfter.bubbleKind === 'reply',
+      attentive: chatAttentive,
+    };
+    report.assertions.chatTemperOk =
+      // Three messages in 90s must arm the reaction...
+      report.assertions.chatTemper.burstTriggered
+      // ...it must actually be visible once the answer lands...
+      && report.assertions.chatTemper.overlay === 'furious'
+      // ...the answer it reacted to must still be readable...
+      && report.assertions.chatTemper.replyStillOnScreen
+      // ...and she must still hold still for the reader.
+      && report.assertions.chatTemper.attentive;
+    write(`assert chat temper: ${report.assertions.chatTemperOk} ` +
+      `${JSON.stringify(report.assertions.chatTemper)}`);
+    await wc.executeJavaScript('__deskpet.clearOverlay(); __deskpet.hideBubble()');
+
     // 5q. Being dragged must not change her pose.
     //     Facing the direction of travel was tried and removed: the left/right
     //     artwork is the walking sway, so swapping her out of the pose she was

@@ -765,11 +765,16 @@ function installIpc() {
 
     // The annoyed reaction was held back until the answer landed. Shown now,
     // right after her reply, where it reads as a reaction to being interrogated.
+    //
+    // It must NOT be suppressed by the reply still being on screen: that is the
+    // whole point -- she answers, then glares at you for asking. An earlier
+    // version bailed out whenever `ui.showingReply` was true, which is by
+    // definition the case 900ms after a reply lands, so 暴怒 could never be
+    // seen no matter how many questions you piled up.
     if (pendingTemper) {
       const emotion = pendingTemper;
       pendingTemper = null;
       setTimeout(() => {
-        if (ui.showingReply) return;
         state.setOverlay(emotion, { duration: 4500, force: true });
       }, 900);
     }
