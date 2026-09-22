@@ -172,29 +172,6 @@ function sparkleBurst(ctx, box, anchor, t) {
   ctx.restore();
 }
 
-/** Shining eyes and a tear, for 委屈. */
-function teary(ctx, box, anchor, t) {
-  const face = at(box, anchor.x, anchor.y);
-  const spread = u(box, anchor.width * 0.30);
-  const centres = anchor.view === 'profile'
-    ? [face.x - spread * 0.6]
-    : [face.x - spread, face.x + spread];
-
-  ctx.save();
-  for (const cx of centres) {
-    ctx.globalAlpha = 0.5 + 0.25 * Math.sin(t * 3);
-    fillEllipse(ctx, cx, face.y, u(box, 0.022), u(box, 0.026), 'rgba(180, 228, 252, 0.85)');
-  }
-  const fall = (t * 0.5) % 1;
-  ctx.globalAlpha = (1 - fall) * 0.85;
-  ctx.fillStyle = WATER;
-  const tx = anchor.view === 'profile' ? face.x - spread * 0.7 : face.x + spread;
-  ctx.beginPath();
-  ctx.ellipse(tx, face.y + u(box, 0.05 + fall * 0.11), u(box, 0.014), u(box, 0.020), 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
 /** A rotating star above her head, for 得意. */
 function prideStar(ctx, box, anchor, t) {
   const p = at(box, anchor.x - anchor.width * 0.55, anchor.top - 0.035);
@@ -255,7 +232,6 @@ const PAINTERS = {
   steam,
   sweatDrop,
   sparkleBurst,
-  teary,
   prideStar,
   swirlStars,
 };
@@ -275,7 +251,10 @@ export const EMOTES = {
   blush: { layers: ['blush'] },
   angry: { layers: ['blush', 'angerMark', 'steam'] },
   dizzy: { layers: ['swirlStars'] },
-  hurt: { layers: ['teary', 'blush'] },
+  // hurt deliberately has no facial overlay: the pose she uses already
+  // reads as tearful, and a second pair of watery eyes drawn on top landed on
+  // her eyelids rather than on her eyes. The state is the whole expression.
+  hurt: { layers: [] },
   proud: { layers: ['prideStar'] },
   delighted: { layers: ['blush', 'sparkleBurst'] },
   awkward: { layers: ['sweatDrop'] },

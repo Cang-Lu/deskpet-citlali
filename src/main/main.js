@@ -68,6 +68,8 @@ function bootstrap() {
   let balanceTimer = null;
   let cursorTimer = null;
   let lastUserActivity = Date.now();
+  /** Stamped by every real reply, so chatter never lands mid-conversation. */
+  let lastChatAt = 0;
   let quitting = false;
   /** Renderer console warnings/errors, surfaced for diagnostics. */
   const rendererIssues = [];
@@ -183,6 +185,7 @@ function bootstrap() {
         },
       });
 
+      if (!chatter) lastChatAt = Date.now();
       const mood = result.mood || (chatter ? 'neutral' : null);
       if (!chatter) {
         config.setHistory([...history, { role: 'user', content: text }, { role: 'assistant', content: result.text }]);
@@ -213,6 +216,18 @@ function bootstrap() {
   }
 
   /** Schedule the next unprompted line, if the user wants those at all. */
+  /**
+   * Schedule her next unprompted line.
+   *
+   * Two things matter beyond the interval itself:
+   *
+   * - **Jitter.** A fixed timer makes her speak at metronome intervals, which
+   *   reads as a machine. The real gap is drawn from a range around the setting.
+   * - **Never during a conversation.** `lastChatAt` is stamped by every reply,
+   *   and the renderer additionally refuses a chatter that arrives while an
+   *   answer is on screen. Together those mean she cannot talk over the thing
+   *   you are still reading.
+   */
   function scheduleChatter() {
     if (chatterTimer) {
       clearTimeout(chatterTimer);
@@ -221,15 +236,19 @@ function bootstrap() {
     const proactive = config.get().proactive || {};
     if (!proactive.enabled || !proactive.idleChatter) return;
     const minutes = Math.max(3, Number(proactive.chatterMinutes) || 25);
+    const jitter = 0.7 + Math.random() * 0.6;
+    const waitMs = Math.max(60_000, Math.round(minutes * jitter * 60_000));
+
     chatterTimer = setTimeout(async () => {
-      const idleFor = (Date.now() - lastUserActivity) / 60000;
       const current = config.get().proactive || {};
-      // Never interrupt a conversation that is already in flight.
-      if (!currentAbort && current.enabled && current.idleChatter && idleFor >= minutes - 0.5) {
+      const idleFor = (Date.now() - lastUserActivity) / 60000;
+      const sinceChat = Date.now() - lastChatAt;
+      const quiet = idleFor >= minutes - 0.5 && sinceChat > minutes * 60_000 * 0.5;
+      if (!currentAbort && current.enabled && current.idleChatter && quiet) {
         await runChat({ chatter: true });
       }
       scheduleChatter();
-    }, minutes * 60 * 1000);
+    }, waitMs);
   }
 
   /* ------------------------------------------------------------------ */

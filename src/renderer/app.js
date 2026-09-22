@@ -163,7 +163,9 @@ async function boot() {
 
   temper = new Temper({
     react: (name, ms) => state.setOverlay(name, { duration: ms, force: true }),
-    mutter: (kind, chance) => behavior.mutter(kind, chance),
+    // Forced: a temper line is tied to an emotion the user just provoked, and
+    // the quiet gap exists for ambient chatter, not for reactions.
+    mutter: (kind, chance) => behavior.mutter(kind, chance, { force: true }),
   });
 
   // A state pointing at a missing clip kills the very first frame, so fail
@@ -702,12 +704,21 @@ let streamBuffer = '';
 
 function installIpc() {
   api.onChatStart(({ chatter }) => {
+    // An unprompted line must never take the screen away from an answer the
+    // user asked for. The main process already waits for a quiet spell, but the
+    // renderer is the only side that knows an answer is still being read, so the
+    // last word on it belongs here.
+    if (chatter && ui.showingReply) {
+      api.cancelMessage();
+      restoreLastLine();
+      return;
+    }
     streamBuffer = '';
     ui.setBusy(true);
     if (chatter) {
       state.setOverlay('thinking', { force: true });
       ui.setBubbleMood('thinking');
-      ui.showBubble('', { mood: 'thinking', status: '她想说点什么…' });
+      ui.showBubble('', { mood: 'thinking', status: '她想说点什么…', kind: 'reply' });
     }
   });
 
@@ -1047,7 +1058,7 @@ function exposeDebugSurface() {
       return { base: state.base, clip: animator.clipName };
     },
     /** Trigger one of her ambient lines, for testing. */
-    mutter: (kind) => behavior.mutter(kind || 'lyingIdle', 1),
+    mutter: (kind) => behavior.mutter(kind || 'lyingIdle', 1, { force: true }),
     /** Show an answer as if it came from the model, for testing. */
     sayReply: (text) => sayReply(text, { mood: 'neutral' }),
     /** Simulate a click on her, for testing. */

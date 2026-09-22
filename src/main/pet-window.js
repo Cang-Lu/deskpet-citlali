@@ -28,6 +28,8 @@ const BUBBLE_ZONE = 172;
  * makes them painful to read.
  */
 const WORK_BUBBLE_ZONE = 320;
+/** How often the always-on-top flag is re-asserted; see setAlwaysOnTop. */
+const ON_TOP_REASSERT_MS = 4000;
 
 const WALK_TICK_MS = 16;
 /** A walk is a short stroll, never a screen-crossing trek. */
@@ -107,7 +109,7 @@ class PetWindow {
       },
     });
 
-    this.win.setAlwaysOnTop(Boolean(this.config.get().alwaysOnTop), 'floating');
+    this.setAlwaysOnTop(this.config.get().alwaysOnTop !== false);
     this.win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
     this.win.setMenuBarVisibility(false);
 
@@ -224,9 +226,33 @@ class PetWindow {
     this.setPosition(x + dx, y + dy);
   }
 
+  /**
+   * Keep her above other windows.
+   *
+   * A single `setAlwaysOnTop` is not enough on Windows: another application
+   * raising its own window, or a full-screen-ish app taking the top band, can
+   * leave her behind it for good because nothing ever asks again. Re-asserting
+   * on a slow timer costs almost nothing and is what actually keeps her in
+   * front, so the interval is the feature, not a workaround.
+   */
   setAlwaysOnTop(flag) {
+    const want = Boolean(flag);
+    this.alwaysOnTop = want;
     if (!this.win || this.win.isDestroyed()) return;
-    this.win.setAlwaysOnTop(Boolean(flag), 'floating');
+    this.win.setAlwaysOnTop(want, want ? 'screen-saver' : 'normal');
+    if (want && !this.onTopTimer) {
+      this.onTopTimer = setInterval(() => this.reassertOnTop(), ON_TOP_REASSERT_MS);
+    } else if (!want && this.onTopTimer) {
+      clearInterval(this.onTopTimer);
+      this.onTopTimer = null;
+    }
+  }
+
+  reassertOnTop() {
+    if (!this.win || this.win.isDestroyed() || !this.alwaysOnTop) return;
+    // Cheap enough to repeat: this only re-orders the window, it does not
+    // recreate or resize anything.
+    this.win.setAlwaysOnTop(true, 'screen-saver');
   }
 
   /** Re-create the window at a new sprite size, keeping its bottom edge. */
@@ -340,6 +366,7 @@ class PetWindow {
 
   /** Crop a sprite cell for use as the tray icon. */
   destroy() {
+    if (this.onTopTimer) { clearInterval(this.onTopTimer); this.onTopTimer = null; }
     this.stopWalk();
     if (this.persistTimer) clearTimeout(this.persistTimer);
     if (this.win && !this.win.isDestroyed()) this.win.destroy();

@@ -34,6 +34,10 @@ const WALK_SPEED = 58;
 const WALK_STEP_MIN = 130;
 const WALK_STEP_MAX = 260;
 
+/** Quiet gap between unprompted lines, so she does not chatter constantly. */
+const MUTTER_GAP_MIN_MS = 55_000;
+const MUTTER_GAP_MAX_MS = 150_000;
+
 const IDLE_AFTER_ARRIVAL_MIN = 800;
 const IDLE_AFTER_ARRIVAL_MAX = 2_500;
 
@@ -198,6 +202,8 @@ export class Behavior {
     this.posesSinceWalk = 0;
     this.posesBeforeWalk = randomInt(POSES_BEFORE_WALK_MIN, POSES_BEFORE_WALK_MAX);
     this.paused = false;
+    /** Earliest time the next unprompted line may be spoken. */
+    this.nextMutterAt = 0;
     /** While this is in the future she stays put and keeps quiet. */
     this.attentionUntil = 0;
   }
@@ -239,7 +245,7 @@ export class Behavior {
     if (wasSleeping && !this.walking && this.state.isFree) {
       this.state.setBase('idle');
       this.state.setOverlay('surprised', { duration: 2000 });
-      this.mutter('waking', 1);
+      this.mutter('waking', 1, { force: true });
     }
   }
 
@@ -274,14 +280,33 @@ export class Behavior {
     this.nextChangeAt = clock() + randomBetween(IDLE_AFTER_ARRIVAL_MIN, IDLE_AFTER_ARRIVAL_MAX);
   }
 
-  /** Say one of her ambient lines, from a pool that matches the current pose. */
-  mutter(kind, probability = 0.5) {
+  /**
+   * Say one of her ambient lines.
+   *
+   * @param {string} kind pool name
+   * @param {number} [probability]
+   * @param {{force?:boolean}} [opts] `force` is for lines tied to something
+   *        visible and occasional — a temper reaction, waking up — which are
+   *        allowed through the quiet gap.
+   */
+  mutter(kind, probability = 0.5, { force = false } = {}) {
     if (!this.onMutter) return;
     // Never talk over an answer the user is still reading.
     if (this.attentive) return;
+    const proactive = this.getSettings().proactive || {};
+    // The "speak up on its own" switch covers everything unprompted, not only
+    // the model-generated lines: muttering is what users actually notice, so
+    // leaving it out made the switch look broken.
+    if (!force && proactive.idleChatter === false) return;
+
+    const now = clock();
+    // A floor between lines. Muttering on most pose changes meant she said
+    // something every ten or twenty seconds, which is a lot for a companion.
+    if (!force && now < this.nextMutterAt) return;
     if (Math.random() > probability) return;
     const pool = MUTTERS[kind];
     if (!pool || !pool.length) return;
+    this.nextMutterAt = now + randomBetween(MUTTER_GAP_MIN_MS, MUTTER_GAP_MAX_MS);
     this.onMutter(pool[Math.floor(Math.random() * pool.length)]);
   }
 

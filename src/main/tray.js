@@ -101,7 +101,7 @@ function createMenuTemplate(deps) {
       click: (item) => deps.update({ proactive: { wander: item.checked } }),
     },
     {
-      label: '　主动搭话',
+      label: '　主动开口说话',
       type: 'checkbox',
       enabled: Boolean(proactive.enabled),
       checked: Boolean(proactive.idleChatter),
