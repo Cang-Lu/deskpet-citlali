@@ -249,7 +249,14 @@ const PAINTERS = {
  */
 export const EMOTES = {
   blush: { layers: ['blush'] },
-  angry: { layers: ['blush', 'angerMark', 'steam'] },
+  // No facial layer. The cheek flush added for anger landed at the outer corner
+  // of each eye rather than on her cheeks, where it read as a pair of red discs
+  // stuck to her face. Same lesson as the watery eyes that used to be drawn for
+  // hurt (below) and the spirals that were drawn for dizziness (above): a
+  // derived mark on a pixel-art face has to line up with artwork it does not
+  // know about, and when it misses it looks pasted on. The mark above her head
+  // and the steam carry the state perfectly well.
+  angry: { layers: ['angerMark', 'steam'] },
   dizzy: { layers: ['swirlStars'] },
   // hurt deliberately has no facial overlay: the pose she uses already
   // reads as tearful, and a second pair of watery eyes drawn on top landed on

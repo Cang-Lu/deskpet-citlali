@@ -1204,6 +1204,31 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     );
     emoteMismatchesPush(hurtOverlay, emoteMismatches);
 
+    // angry/furious must keep everything *above* her head. It used to include
+    // the cheek flush, which landed at the outer corner of each eye instead of
+    // on her cheeks -- reported as red discs stuck to her face that did not
+    // line up with her eyes. Nothing this emote draws may reach the face now,
+    // which is a stronger statement than "the blush layer is gone".
+    const angryOverlay = await wc.executeJavaScript(`
+      (() => {
+        const m = window.__deskpet.measureEmote('angry', 5, 0.5);
+        if (!m.bbox) return null;
+        const h = window.__deskpet.info.petBox.height;
+        return {
+          centre: m.bbox.centreNorm,
+          bottom: Number((m.bbox.centreNorm[1] + (m.bbox.h / 2) / h).toFixed(3)),
+        };
+      })()
+    `);
+    report.assertions.angryFaceClear = angryOverlay;
+    if (!angryOverlay) {
+      emoteMismatches.push('angry: nothing drawn at all');
+    } else if (angryOverlay.bottom > 0.25) {
+      emoteMismatches.push(
+        `angry: reaches y=${angryOverlay.bottom}, which is her face; everything it draws belongs above her head`,
+      );
+    }
+
     report.assertions.emotes = { composite: emoteProbe, marks, mismatches: emoteMismatches };
     report.assertions.emotesOk = emoteMismatches.length === 0;
     write(`assert derived expressions land correctly: ${report.assertions.emotesOk} ` +
