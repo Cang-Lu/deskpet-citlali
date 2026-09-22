@@ -1532,18 +1532,28 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
           ? await settingsWin.webContents.executeJavaScript(`document.getElementById('keyHint').textContent`)
           : '';
         const storedKey = require('./secrets').readApiKey(config.get());
+        // Read the file back from disk, not just the in-memory copy. A restart
+        // only ever sees the file, so that is what has to carry the key -- and
+        // the round trip through the cipher is part of the claim.
+        const onDisk = JSON.parse(fs.readFileSync(config.file, 'utf8'));
+        const diskKey = require('./secrets').readApiKey(onDisk);
         report.assertions.keySave = {
           hint: uiHint,
           hintSaysSaved: /已保存/.test(uiHint),
           persisted: storedKey === 'sk-selftest-ui-key-0123456789',
+          persistedToDisk: diskKey === 'sk-selftest-ui-key-0123456789',
+          storedEncrypted: Boolean(onDisk.apiKeyCipher) && !onDisk.apiKey,
           hasKeyFlag: require('./secrets').hasApiKey(config.get()),
         };
         report.assertions.keySaveOk = report.assertions.keySave.persisted
+          && report.assertions.keySave.persistedToDisk
           && report.assertions.keySave.hasKeyFlag;
         write(`assert API key persists from the UI: ${report.assertions.keySaveOk} ` +
           `${JSON.stringify(report.assertions.keySave)}`);
 
-        // Put it back so the screenshots below show the empty-key state.
+        // Drop the test key again so the screenshots below show the empty-key
+        // state. This only ever touches the self-test's own data directory; it
+        // used to run against the real one and erase the user's key.
         config.update(require('./secrets').writeApiKey(''));
         if (settingsAlive()) {
           await settingsWin.webContents.executeJavaScript(
