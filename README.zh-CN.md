@@ -317,6 +317,8 @@ npm run dist          # 打包成 Windows 可执行文件（见上方「自己�
 
 加上 `DESKPET_SELFTEST_NET=1` 还会用无效 Key 真打一次 DeepSeek，验证 HTTP + SSE 链路和余额接口。
 
+`--selftest` 会跑在独立的数据目录 `.qa/data` 里。自检驱动的是真实界面，而界面会写设置——API Key、窗口大小、余额提醒状态——所以它以前可能把你填好的 Key 清掉，现在不会了。
+
 产物：`.qa/states/*.png`（逐状态截图）、`.qa/settings-window.png` 与 `-2.png`（设置页上下两部分）、`.qa/history-window.png`、`.qa/low-balance.png`、`.qa/selftest.json`（报告）。
 
 排查界面问题时可以用 `tools/inspect-shot.js` 把任意截图裁切放大并打印像素采样：

@@ -42,6 +42,15 @@ protocol.registerSchemesAsPrivileged([
 
 // Keep every write inside a directory we control (and inside the sandbox when
 // DESKPET_DATA_DIR points at the workspace).
+//
+// `--selftest` drives the real UI, and the UI writes settings: an API key, a
+// size, balance-warning state, history. Running that against the user's real
+// profile means a test run can erase the key they typed in and leave QA state
+// behind, so the self-test gets a scratch directory of its own. An explicit
+// DESKPET_DATA_DIR still wins.
+if (process.argv.includes('--selftest') && !process.env.DESKPET_DATA_DIR) {
+  process.env.DESKPET_DATA_DIR = path.join(__dirname, '..', '..', '.qa', 'data');
+}
 app.setPath('userData', resolveDataDir(app.getPath('userData')));
 
 const gotLock = app.requestSingleInstanceLock();

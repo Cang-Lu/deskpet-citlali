@@ -314,6 +314,8 @@ npm run fetch-assets  # Re-download the sprite sheet and verify its SHA-256
 
 Setting `DESKPET_SELFTEST_NET=1` additionally makes a real request to DeepSeek with an invalid key, exercising the HTTP + SSE path and the balance endpoint.
 
+`--selftest` runs in its own data directory, `.qa/data`, because the test drives the real UI and the UI writes settings — an API key, a window size, balance-warning state. Running it against your own profile meant a test run could erase the key you had typed in, so it no longer can.
+
 Output: `.qa/states/*.png` (per-state screenshots), `.qa/settings-window.png` and `-2.png` (both halves of the settings page), `.qa/history-window.png`, `.qa/low-balance.png`, and `.qa/selftest.json` (the report).
 
 When diagnosing a UI problem, `tools/inspect-shot.js` crops and zooms any screenshot and prints pixel samples:

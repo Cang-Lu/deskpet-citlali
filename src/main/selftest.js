@@ -1033,6 +1033,17 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
     await sleep(300);
 
     // 5m. The conversation log must be reachable and show what was said.
+    //
+    // Seed it rather than relying on what happens to be on disk. The self-test
+    // runs in a scratch data directory (see main.js) because it writes settings,
+    // and the earlier chat steps cannot leave real turns behind: the key they
+    // use is deliberately invalid, so nothing is ever generated to store.
+    config.setHistory([
+      { role: 'user', content: '你昨天晚上干什么去了？' },
+      { role: 'assistant', content: '看小说。看到第三章就睡着了，别问了。' },
+      { role: 'user', content: '认识桑多涅吗？' },
+      { role: 'assistant', content: '哼，那丫头租过一整条船，我还替她看过前台。' },
+    ]);
     if (openHistory) {
       openHistory();
       await sleep(2500);
@@ -1055,7 +1066,9 @@ async function run({ app, pet, tray, config, openSettings, openHistory, renderer
           write('history window capture: unavailable');
         }
         report.assertions.historyWindow = shown;
-        report.assertions.historyWindowOk = shown.turns > 0;
+        // The seeded conversation must actually render: two turns on screen and
+        // a summary that counts them. Merely finding the window is not enough.
+        report.assertions.historyWindowOk = shown.turns >= 2 && /2/.test(shown.summary);
         write(`assert history window: ${report.assertions.historyWindowOk} ${JSON.stringify(shown)}`);
         historyWin.close();
       } else {
